@@ -199,14 +199,12 @@ def _compute_mom_growth_factors(monthly_df: pd.DataFrame) -> Optional[pd.DataFra
     if "mom_bucket" not in monthly_df or "growth_bucket" not in monthly_df:
         return None
 
-    # Make sure we have at least 2 buckets to compute factor
     if monthly_df["mom_bucket"].nunique() < 2 or monthly_df["growth_bucket"].nunique() < 2:
         return None
 
     monthly_df["weight"] = monthly_df["ME"].clip(lower=0)
     monthly_df["weighted_return"] = monthly_df["monthly_return"] * monthly_df["weight"]
 
-    # Momentum factor: top bucket minus bottom bucket
     mom_agg = (
         monthly_df.groupby(["date", "mom_bucket"], as_index=False)
         .agg(weight_sum=("weight", "sum"), weighted_return_sum=("weighted_return", "sum"))
@@ -223,7 +221,6 @@ def _compute_mom_growth_factors(monthly_df: pd.DataFrame) -> Optional[pd.DataFra
         np.nan
     )
 
-    # Growth factor: top bucket minus bottom bucket
     growth_agg = (
         monthly_df.groupby(["date", "growth_bucket"], as_index=False)
         .agg(weight_sum=("weight", "sum"), weighted_return_sum=("weighted_return", "sum"))
@@ -240,7 +237,6 @@ def _compute_mom_growth_factors(monthly_df: pd.DataFrame) -> Optional[pd.DataFra
         np.nan
     )
 
-    # Combine
     factors = pd.DataFrame({
         "date": mom_factor["date"],
         "mom_factor": mom_factor["mom_factor"],
@@ -392,10 +388,6 @@ def main():
         by="ticker",
         direction="backward",
     )
-
-    # -----------------------------
-# Assign characteristic quintiles
-# -----------------------------
 
     QUINTILES = [0, 20, 40, 60, 80, 100]
 
