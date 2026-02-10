@@ -21,9 +21,7 @@ class APIClient:
         url = f'{self.base_url}/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}'
         params = {'adjusted': str(adjusted).lower(), 'sort': 'asc', 'limit': 50000}
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_response(url, params)
 
         if data.get('resultsCount', 0) == 0:
             raise ValueError(f"No daily bars found for {ticker} between {start} and {end}")
@@ -40,9 +38,7 @@ class APIClient:
         url = f'{self.base_url}/stocks/financials/v1/ratios'
         params = {'ticker': ticker}
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_response(url, params)
 
         if data.get('resultsCount', 0) == 0:
             raise ValueError(f"No ratios data found for {ticker}")
@@ -54,9 +50,7 @@ class APIClient:
         url = f'{self.base_url}/stocks/financials/v1/income-statements'
         params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_response(url, params)
 
         if not data.get('results'):
             raise ValueError(f"No income statement data found for {ticker}")
@@ -68,9 +62,7 @@ class APIClient:
         url = f'{self.base_url}/stocks/financials/v1/balance-sheets'
         params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_response(url, params)
 
         if not data.get('results'):
             raise ValueError(f"No balance sheet data found for {ticker}")
@@ -82,9 +74,7 @@ class APIClient:
         url = f'{self.base_url}/stocks/financials/v1/cash-flow-statements'
         params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_response(url, params)
 
         if not data.get('results'):
             raise ValueError(f"No cash flow statement data found for {ticker}")
@@ -94,3 +84,8 @@ class APIClient:
     #Fetch treasury yields for a date. Returns dict: tenor -> yield value
     def get_treasury_yields(self, as_of: date) -> dict:
         pass
+
+    def _get_response(self, url, params):
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()
