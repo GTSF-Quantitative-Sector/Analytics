@@ -51,15 +51,45 @@ class APIClient:
 
     #Fetch income statements (revenue, net income, EPS). Returns DataFrame
     def get_income_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        pass
+        url = f'{self.base_url}/stocks/financials/v1/income-statements'
+        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
+
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data.get('results'):
+            raise ValueError(f"No income statement data found for {ticker}")
+
+        return pd.DataFrame(data['results'])
 
     #Fetch balance sheets (assets, liabilities, equity). Returns DataFrame
     def get_balance_sheets(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        pass
+        url = f'{self.base_url}/stocks/financials/v1/balance-sheets'
+        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
+
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data.get('results'):
+            raise ValueError(f"No balance sheet data found for {ticker}")
+
+        return pd.DataFrame(data['results'])
 
     #Fetch cash flow statements (operating, investing, financing). Returns DataFrame
     def get_cash_flow_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        pass
+        url = f'{self.base_url}/stocks/financials/v1/cash-flow-statements'
+        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
+
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data.get('results'):
+            raise ValueError(f"No cash flow statement data found for {ticker}")
+
+        return pd.DataFrame(data['results'])
 
     #Fetch treasury yields for a date. Returns dict: tenor -> yield value
     def get_treasury_yields(self, as_of: date) -> dict:
