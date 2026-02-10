@@ -59,12 +59,15 @@ class APIClient:
 
     #Fetch treasury yields for a date. Returns dict: tenor -> yield value
     def get_treasury_yields(self, as_of: date) -> dict:
-        pass
+        url = f'{self.base_url}/fed/v1/treasury-yields'
+        params = {'date': str(as_of)}
 
-    def _get_response(self, url, params):
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        data = self._get_response(url, params)
+
+        if not data.get('results'):
+            raise ValueError(f"No treasury yield data for {as_of}")
+
+        return data['results'][0]
 
     def _get_statements(self, financials_type, ticker, period, limit):
         url = f'{self.base_url}/stocks/financials/v1/{financials_type}'
@@ -76,3 +79,8 @@ class APIClient:
             raise ValueError(f"No {financials_type} data found for {ticker}")
 
         return pd.DataFrame(data['results'])
+
+    def _get_response(self, url, params):
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()
