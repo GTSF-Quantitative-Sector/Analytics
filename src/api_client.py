@@ -47,39 +47,15 @@ class APIClient:
 
     #Fetch income statements (revenue, net income, EPS). Returns DataFrame
     def get_income_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        url = f'{self.base_url}/stocks/financials/v1/income-statements'
-        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
-
-        data = self._get_response(url, params)
-
-        if not data.get('results'):
-            raise ValueError(f"No income statement data found for {ticker}")
-
-        return pd.DataFrame(data['results'])
+        return self._get_statements('income-statements', ticker, period, limit)
 
     #Fetch balance sheets (assets, liabilities, equity). Returns DataFrame
     def get_balance_sheets(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        url = f'{self.base_url}/stocks/financials/v1/balance-sheets'
-        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
-
-        data = self._get_response(url, params)
-
-        if not data.get('results'):
-            raise ValueError(f"No balance sheet data found for {ticker}")
-
-        return pd.DataFrame(data['results'])
+        return self._get_statements('balance-sheets', ticker, period, limit)
 
     #Fetch cash flow statements (operating, investing, financing). Returns DataFrame
     def get_cash_flow_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
-        url = f'{self.base_url}/stocks/financials/v1/cash-flow-statements'
-        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
-
-        data = self._get_response(url, params)
-
-        if not data.get('results'):
-            raise ValueError(f"No cash flow statement data found for {ticker}")
-
-        return pd.DataFrame(data['results'])
+        return self._get_statements('cash-flow-statements', ticker, period, limit)
 
     #Fetch treasury yields for a date. Returns dict: tenor -> yield value
     def get_treasury_yields(self, as_of: date) -> dict:
@@ -89,3 +65,14 @@ class APIClient:
         resp = self.session.get(url, params=params)
         resp.raise_for_status()
         return resp.json()
+
+    def _get_statements(self, financials_type, ticker, period, limit):
+        url = f'{self.base_url}/stocks/financials/v1/{financials_type}'
+        params = {'tickers': ticker, 'timeframe': period, 'limit': limit, 'sort': 'period_end.desc'}
+
+        data = self._get_response(url, params)
+
+        if not data.get('results'):
+            raise ValueError(f"No {financials_type} data found for {ticker}")
+
+        return pd.DataFrame(data['results'])
