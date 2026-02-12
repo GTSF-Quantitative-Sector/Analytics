@@ -11,6 +11,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from src.api_client import APIClient
 
 import numpy as np
 import pandas as pd
@@ -21,8 +22,8 @@ from dotenv import load_dotenv
 # =========================
 # Config
 # =========================
-START_DATE = date(2020, 9, 15)
-END_DATE = date(2025, 9, 15)  # or up to today date.today()
+START_DATE = date(2021, 12, 15)
+END_DATE = date(2026, 12, 15)  # or up to today date.today()
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 FUND_DIR = Path("fundamentals")
@@ -41,9 +42,9 @@ SPY_PATH = DATA_DIR / "SPY.csv"
 REQUESTS_PER_MINUTE = 300
 SLEEP_BETWEEN_CALLS = max(0.02, 60.0 / REQUESTS_PER_MINUTE)
 
-BASE_V2 = "https://api.polygon.io/v2"
-BASE_V3 = "https://api.polygon.io/v3"
-BASE_VX = "https://api.polygon.io"
+# BASE_V2 = "https://api.polygon.io/v2"
+# BASE_V3 = "https://api.polygon.io/v3"
+# BASE_VX = "https://api.polygon.io"
 
 
 # ****Toggle for testing vs full run (SET DO_FULL_RUN TO TRUE)****
@@ -54,10 +55,12 @@ DRY_RUN_TICKERS = ["AAPL", "MSFT"]
 # Environment / Session
 # =========================
 load_dotenv()
-API_KEY = '4cR_irLDgivxae1WO4y0Wb30VYxXRkQj' # os.getenv("POLYGON_API_KEY")
+API_KEY = # os.getenv("POLYGON_API_KEY")
 if not API_KEY:
     print("ERROR: POLYGON_API_KEY missing. Add it to your .env file.", file=sys.stderr)
     sys.exit(1)
+
+api = APIClient(API_KEY)
 
 # Cached session: avoid re-hitting Polygon
 # 3-day cache expiration (May want to expand)
@@ -426,7 +429,6 @@ def get_quarterly_financials(ticker: str) -> pd.DataFrame:
 
     bs_df = pd.DataFrame(bs_rows)
 
-    # NEW: income + cash flow fundamentals
     growth_df = extract_growth_fundamentals(raw)
 
     if bs_df.empty:
@@ -435,13 +437,8 @@ def get_quarterly_financials(ticker: str) -> pd.DataFrame:
     if growth_df.empty:
         return bs_df
 
-    # Merge everything by period_end
-    # fin = pd.merge(bs_df, growth_df, on="period_end", how="outer")
-    # return fin.sort_values("period_end").reset_index(drop=True)
-
     fin = pd.merge(bs_df, growth_df, on="period_end", how="outer")
 
-    # ---- GUARANTEE REQUIRED COLUMNS ----
     for col in ["bvps", "diluted_shares"]:
         if col not in fin.columns:
             fin[col] = np.nan
@@ -457,13 +454,6 @@ def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
     """
     out = daily.copy()
 
-    # if out.empty or fin.empty:
-    #     out["pb_ratio"] = np.nan
-    #     out["market_cap"] = np.nan
-    #     out["fin_period_used"] = pd.NaT
-    #     out["shares_outstanding_used"] = np.nan
-    #     return out
-
     REQUIRED = {"period_end", "bvps", "diluted_shares"}
     if fin.empty or not REQUIRED.issubset(fin.columns):
         out["pb_ratio"] = np.nan
@@ -472,7 +462,6 @@ def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
         out["shares_outstanding_used"] = np.nan
         return out
 
-    # Prepare as-of merge on date
     f = fin.rename(columns={"period_end": "fin_period_end"}).copy()
 
     left = out.copy()
@@ -523,10 +512,8 @@ def get_spy_data_polygon(start: date, end: date) -> pd.DataFrame:
     if SPY_PATH.exists():
         return pd.read_csv(SPY_PATH, parse_dates=["date"])
 
-    # Get prices
     prices = get_daily_bars("SPY", start, end)
 
-    # Try to get financials (optional; SPY is an ETF, may not have)
     try:
         fin = get_quarterly_financials("SPY")
     except Exception:
@@ -536,28 +523,20 @@ def get_spy_data_polygon(start: date, end: date) -> pd.DataFrame:
     final.to_csv(SPY_PATH, index=False)
     return final
 
-# =========================
-# Orchestration (one ticker)
-# =========================
+
 def run_ticker(ticker: str, start: date, end: date) -> None:
     prices = get_daily_bars(ticker, start, end)
     fin = get_quarterly_financials(ticker)
 
-    # Save fundamentals
     if not fin.empty:
         fin_out = FUND_DIR / f"{ticker}_fundamentals.csv"
         fin.to_csv(fin_out, index=False)
 
-    # Existing PB + market cap logic
     final = attach_pb_and_mcap(prices, fin)
 
     out_path = DATA_DIR / f"{ticker}.csv"
     final.to_csv(out_path, index=False)
 
-
-# =========================
-# Main
-# =========================
 def main():
     file_tickers = load_tickers_from_file(TICKER_LIST_PATH)
 
@@ -588,7 +567,7 @@ def main():
         print(f"[{i}/{len(tickers)}] {tkr}")
         run_ticker(tkr, START_DATE, END_DATE)
     print(f"Done. CSVs written to: {DATA_DIR.resolve()}")
-    # Fetch SPY data via Polygon
+
     spy_df = get_spy_data_polygon(START_DATE, END_DATE)
     print(f"SPY data fetched: {len(spy_df)} rows, saved at {SPY_PATH}")
 
