@@ -42,9 +42,9 @@ SPY_PATH = DATA_DIR / "SPY.csv"
 REQUESTS_PER_MINUTE = 300
 SLEEP_BETWEEN_CALLS = max(0.02, 60.0 / REQUESTS_PER_MINUTE)
 
-# BASE_V2 = "https://api.polygon.io/v2"
-# BASE_V3 = "https://api.polygon.io/v3"
-# BASE_VX = "https://api.polygon.io"
+BASE_V2 = "https://api.polygon.io/v2"
+BASE_V3 = "https://api.polygon.io/v3"
+BASE_VX = "https://api.polygon.io"
 
 
 # ****Toggle for testing vs full run (SET DO_FULL_RUN TO TRUE)****
@@ -55,61 +55,58 @@ DRY_RUN_TICKERS = ["AAPL", "MSFT"]
 # Environment / Session
 # =========================
 load_dotenv()
-API_KEY = # os.getenv("POLYGON_API_KEY")
+API_KEY = '4cR_irLDgivxae1WO4y0Wb30VYxXRkQj' # os.getenv("POLYGON_API_KEY")
 if not API_KEY:
     print("ERROR: POLYGON_API_KEY missing. Add it to your .env file.", file=sys.stderr)
     sys.exit(1)
 
-api = APIClient(API_KEY)
-
 # Cached session: avoid re-hitting Polygon
 # 3-day cache expiration (May want to expand)
-SESSION = requests_cache.CachedSession(
-    cache_name=str(CACHE_DIR / "polygon_cache"),
-    backend="sqlite",
-    allowable_methods=("GET",),
-    expire_after=timedelta(days=3),
-    stale_if_error=True,
-)
-SESSION.params = SESSION.params or {}
-SESSION.params.update({"apiKey": API_KEY})
+# SESSION = requests_cache.CachedSession(
+#     cache_name=str(CACHE_DIR / "polygon_cache"),
+#     backend="sqlite",
+#     allowable_methods=("GET",),
+#     expire_after=timedelta(days=3),
+#     stale_if_error=True,
+# )
+# SESSION.params = SESSION.params or {}
+# SESSION.params.update({"apiKey": API_KEY})
 
 
 # =========================
 # Helpers
 # =========================
-def _sleep():
-    time.sleep(SLEEP_BETWEEN_CALLS)
+# def _sleep():
+#     time.sleep(SLEEP_BETWEEN_CALLS)
+
+# def _get(
+#     url: str, params: Optional[Dict[str, Any]] = None, retries: int = 5
+# ) -> Dict[str, Any]:
+#     """GET with simple retry/backoff and rate-limit awareness."""
+#     params = params or {}
+#     backoff = 1.0
+#     for attempt in range(1, retries + 1):
+#         try:
+#             resp = SESSION.get(url, params=params, timeout=30)
+#             if not resp.from_cache:
+#                 _sleep()
+#             if resp.status_code == 429:
+#                 time.sleep(backoff)
+#                 backoff = min(30.0, backoff * 2.0)
+#                 continue
+#             resp.raise_for_status()
+#             return resp.json()
+#         except requests.RequestException as e:
+#             if attempt == retries:
+#                 raise
+#             time.sleep(backoff)
+#             backoff = min(30.0, backoff * 2.0)
+#     # Should not reach here
+#     return {}
 
 
-def _get(
-    url: str, params: Optional[Dict[str, Any]] = None, retries: int = 5
-) -> Dict[str, Any]:
-    """GET with simple retry/backoff and rate-limit awareness."""
-    params = params or {}
-    backoff = 1.0
-    for attempt in range(1, retries + 1):
-        try:
-            resp = SESSION.get(url, params=params, timeout=30)
-            if not resp.from_cache:
-                _sleep()
-            if resp.status_code == 429:
-                time.sleep(backoff)
-                backoff = min(30.0, backoff * 2.0)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            if attempt == retries:
-                raise
-            time.sleep(backoff)
-            backoff = min(30.0, backoff * 2.0)
-    # Should not reach here
-    return {}
-
-
-def _iso(d: date) -> str:
-    return d.strftime("%Y-%m-%d")
+# def _iso(d: date) -> str:
+#     return d.strftime("%Y-%m-%d")
 
 
 def _fin_cache_path(ticker: str) -> Path:
@@ -239,16 +236,15 @@ def get_sp500_tickers() -> List[str]:
 # =========================
 # Prices (daily aggregates)
 # =========================
-def get_daily_bars(ticker: str, start: date, end: date) -> pd.DataFrame:
+def get_daily_bars(api: APIClient, ticker: str, start: date, end: date) -> pd.DataFrame:
     """
     /v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}?adjusted=true
     Returns DataFrame: date, open, close, high, low, volume, daily_change, daily_change_pct
     """
-    url = f"{BASE_V2}/aggs/ticker/{ticker}/range/1/day/{_iso(start)}/{_iso(end)}"
-    params = {"adjusted": "true", "sort": "asc", "limit": 50000}
-    data = _get(url, params=params)
-    results = data.get("results") or []
-    if not results:
+    # url = f"{BASE_V2}/aggs/ticker/{ticker}/range/1/day/{_iso(start)}/{_iso(end)}"
+    # params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+    data = api.get_daily_bars(ticker, start, end) # get(url, params=params)
+    if data.empty:
         print(f"[WARN]: Data is empty for {ticker}")
         return pd.DataFrame(
             columns=[
@@ -263,31 +259,17 @@ def get_daily_bars(ticker: str, start: date, end: date) -> pd.DataFrame:
             ]
         )
 
-    df = pd.DataFrame(results)
-    # 't' is ms timestamp in UTC; convert to NY date
-    df["date"] = (
-        pd.to_datetime(df["t"], unit="ms", utc=True)
-        .dt.tz_convert("America/New_York")
-        .dt.date
-    )
-    df.rename(
-        columns={"o": "open", "c": "close", "h": "high", "l": "low", "v": "volume"},
-        inplace=True,
-    )
-    df = (
-        df[["date", "open", "close", "high", "low", "volume"]]
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
+    data = data.sort_values("date").reset_index(drop=True)
 
-    # Daily change metrics
-    df["daily_change"] = df["close"] - df["open"]
+    data["daily_change"] = data["close"] - data["open"]
     with np.errstate(divide="ignore", invalid="ignore"):
-        df["daily_change_pct"] = np.where(
-            df["open"].abs() > 0, df["daily_change"] / df["open"], np.nan
+        data["daily_change_pct"] = np.where(
+            data["open"].abs() > 0,
+            data["daily_change"] / data["open"],
+            np.nan,
         )
 
-    return df
+    return data
 
 
 # =========================
@@ -397,7 +379,77 @@ def enrich_row_with_financials(row, fin_periods):
 # =========================
 # Financials
 # =========================
-def get_quarterly_financials(ticker: str) -> pd.DataFrame:
+def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
+
+    # bs = api.get_balance_sheets(ticker, period="quarterly")
+    # is_ = api.get_income_statements(ticker, period="quarterly")
+    # cf = api.get_cash_flow_statements(ticker, period="quarterly")
+
+    # if bs.empty and is_.empty and cf.empty:
+    #     return pd.DataFrame()
+
+    # bs = bs.rename(columns={
+    #     "period_end_date": "period_end",
+    #     "total_equity": "equity",
+    #     "common_stock_shares_outstanding": "shares",
+    # })
+
+    # is_ = is_.rename(columns={
+    #     "period_end_date": "period_end",
+    #     "revenues": "revenue",
+    #     "net_income_loss": "net_income",
+    #     "diluted_average_shares": "shares",
+    # })
+
+    # cf = cf.rename(columns={
+    #     "period_end_date": "period_end",
+    #     "net_cash_flow_from_operating_activities": "operating_cf",
+    #     "capital_expenditures": "capex",
+    # })
+
+    # for df in (bs, is_, cf):
+    #     if "period_end" in df:
+    #         df["period_end"] = pd.to_datetime(df["period_end"])
+
+    # fin = (
+    #     bs.merge(is_, on="period_end", how="outer", suffixes=("", "_is"))
+    #       .merge(cf, on="period_end", how="outer")
+    #       .sort_values("period_end")
+    #       .reset_index(drop=True)
+    # )
+
+    # fin["shares"] = (
+    #     fin["shares"]
+    #     .combine_first(fin.get("shares_is"))
+    #     .ffill()
+    # )
+
+    # fin["bvps"] = np.where(
+    #     fin["equity"].notna() & fin["shares"].gt(0),
+    #     fin["equity"] / fin["shares"],
+    #     np.nan,
+    # )
+
+    # fin["fcf"] = np.where(
+    #     fin["operating_cf"].notna() & fin["capex"].notna(),
+    #     fin["operating_cf"] - fin["capex"],
+    #     np.nan,
+    # )
+
+    # return fin[
+    #     [
+    #         "period_end",
+    #         "equity",
+    #         "shares",
+    #         "bvps",
+    #         "revenue",
+    #         "net_income",
+    #         "operating_cf",
+    #         "capex",
+    #         "fcf",
+    #     ]
+    # ]
+
     cache_path = _fin_cache_path(ticker)
     if cache_path.exists():
         raw = json.loads(cache_path.read_text())
@@ -504,15 +556,16 @@ def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
     merged.reset_index(drop=True, inplace=True)
     return merged[keep]
 
-def get_spy_data_polygon(start: date, end: date) -> pd.DataFrame:
+def get_spy_data_polygon(api: APIClient, start: date, end: date) -> pd.DataFrame:
     """
     Fetch SPY daily bars from Polygon and save locally.
     Returns a DataFrame with PB ratio, market cap, daily_change, etc. like other tickers.
     """
+    
     if SPY_PATH.exists():
         return pd.read_csv(SPY_PATH, parse_dates=["date"])
 
-    prices = get_daily_bars("SPY", start, end)
+    prices = get_daily_bars(api, "SPY", start, end)
 
     try:
         fin = get_quarterly_financials("SPY")
@@ -524,9 +577,9 @@ def get_spy_data_polygon(start: date, end: date) -> pd.DataFrame:
     return final
 
 
-def run_ticker(ticker: str, start: date, end: date) -> None:
-    prices = get_daily_bars(ticker, start, end)
-    fin = get_quarterly_financials(ticker)
+def run_ticker(api: APIClient, ticker: str, start: date, end: date) -> None:
+    prices = get_daily_bars(api, ticker, start, end)
+    fin = get_quarterly_financials(api, ticker)
 
     if not fin.empty:
         fin_out = FUND_DIR / f"{ticker}_fundamentals.csv"
@@ -538,6 +591,7 @@ def run_ticker(ticker: str, start: date, end: date) -> None:
     final.to_csv(out_path, index=False)
 
 def main():
+    api = APIClient(API_KEY)
     file_tickers = load_tickers_from_file(TICKER_LIST_PATH)
 
     if file_tickers is not None:
@@ -565,10 +619,10 @@ def main():
     print(f"Processing {len(tickers)} tickers... (cache active)")
     for i, tkr in enumerate(tickers, 1):
         print(f"[{i}/{len(tickers)}] {tkr}")
-        run_ticker(tkr, START_DATE, END_DATE)
+        run_ticker(api, tkr, START_DATE, END_DATE)
     print(f"Done. CSVs written to: {DATA_DIR.resolve()}")
 
-    spy_df = get_spy_data_polygon(START_DATE, END_DATE)
+    spy_df = get_spy_data_polygon(api, START_DATE, END_DATE)
     print(f"SPY data fetched: {len(spy_df)} rows, saved at {SPY_PATH}")
 
 
