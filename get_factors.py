@@ -95,6 +95,10 @@ def load_tickers_from_file(path: Path) -> Optional[List[str]]:
         print(f"WARN {path} exists but contains no tickers.", file=sys.stderr)
     return deduped
 
+def zscore_cross_section(df, value_col):
+    return (
+        df[value_col] - df[value_col].mean()
+    ) / df[value_col].std(ddof=0)
 
 def _build_characteristic_labels(
     df: pd.DataFrame,
@@ -372,11 +376,11 @@ def main():
         axis=1,
     )
 
-    monthly_df["mom_6m"] = (
-        monthly_df
-        .groupby("ticker")["monthly_return"]
-        .transform(lambda x: x.rolling(6).sum())
-    )
+    # monthly_df["mom_6m"] = (
+    #     monthly_df
+    #     .groupby("ticker")["monthly_return"]
+    #     .transform(lambda x: x.rolling(6).sum())
+    # )
 
     monthly_df = monthly_df.sort_values("date")
 
@@ -389,11 +393,35 @@ def main():
         direction="backward",
     )
 
+    monthly_df = monthly_df.sort_values(["ticker", "date"])
+
+    monthly_df["price_lag_1"] = (
+        monthly_df.groupby("ticker")["close"]
+        .transform(lambda x: x.shift(1))
+    )
+
+    monthly_df["price_lag_12"] = (
+        monthly_df.groupby("ticker")["close"]
+        .transform(lambda x: x.shift(12))
+    )
+
+    monthly_df["mom_12_1"] = (
+        monthly_df["price_lag_1"] / monthly_df["price_lag_12"] - 1
+    )
+
+    monthly_df["mom_z"] = (
+        monthly_df
+        .groupby("date")["mom_12_1"]
+        .transform(lambda x: x.clip(x.quantile(0.01), x.quantile(0.99)))
+    )
+
+    monthly_df["size_signal"] = -np.log(monthly_df["ME"])
+
     QUINTILES = [0, 20, 40, 60, 80, 100]
 
     mom_labels = _build_characteristic_labels(
         monthly_df,
-        value_column="mom_6m",
+        value_column="mom_z",
         snapshot_month=6,
         assignment_year_offset=0,
         label_name="mom_bucket",
@@ -427,11 +455,11 @@ def main():
 
     size_labels = _build_characteristic_labels(
         monthly_df,
-        value_column="ME",
+        value_column="size_signal",
         snapshot_month=6,
         assignment_year_offset=0,
         label_name="size_bucket",
-        percentiles=SIZE_BREAKPOINTS,
+        percentiles=[0, 50, 100],
         positive_only=True,
         breakpoint_universe=breakpoint_universe,
     )
