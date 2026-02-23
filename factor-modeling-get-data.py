@@ -381,76 +381,66 @@ def enrich_row_with_financials(row, fin_periods):
 # =========================
 def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
 
-    # bs = api.get_balance_sheets(ticker, period="quarterly")
-    # is_ = api.get_income_statements(ticker, period="quarterly")
-    # cf = api.get_cash_flow_statements(ticker, period="quarterly")
-
-    # if bs.empty and is_.empty and cf.empty:
-    #     return pd.DataFrame()
-
-    # bs = bs.rename(columns={
-    #     "period_end_date": "period_end",
-    #     "total_equity": "equity",
-    #     "common_stock_shares_outstanding": "shares",
-    # })
-
-    # is_ = is_.rename(columns={
-    #     "period_end_date": "period_end",
-    #     "revenues": "revenue",
-    #     "net_income_loss": "net_income",
-    #     "diluted_average_shares": "shares",
-    # })
-
-    # cf = cf.rename(columns={
-    #     "period_end_date": "period_end",
-    #     "net_cash_flow_from_operating_activities": "operating_cf",
-    #     "capital_expenditures": "capex",
-    # })
-
-    # for df in (bs, is_, cf):
-    #     if "period_end" in df:
-    #         df["period_end"] = pd.to_datetime(df["period_end"])
-
-    # fin = (
-    #     bs.merge(is_, on="period_end", how="outer", suffixes=("", "_is"))
-    #       .merge(cf, on="period_end", how="outer")
-    #       .sort_values("period_end")
-    #       .reset_index(drop=True)
+    # Will need to add PB ratio (market cap/book equity), earnings yield (earnings/market cap), cash flow yield (cash flow/market cap), 
+    # revenue, cost of goods sold (cost of revenue), total assets, net income, shareholder's equity, debt to equity (liabilities/equity)
+    # earning volatilty:
+    # earnings_vol = (
+    #     fin_df
+    #     .groupby("ticker")["net_income"]
+    #     .pct_change()
+    #     .rolling(8)   # 2 years quarterly
+    #     .std()
     # )
 
-    # fin["shares"] = (
-    #     fin["shares"]
-    #     .combine_first(fin.get("shares_is"))
-    #     .ffill()
-    # )
+    # cache_path = _fin_cache_path(ticker)
+    # if cache_path.exists():
+    #     raw = json.loads(cache_path.read_text())
+    # else:
+    #     url = f"{BASE_VX}/vX/reference/financials"
+    #     params = {
+    #         "ticker": ticker,
+    #         "timeframe": "quarterly",
+    #         "limit": 100,
+    #         "sort": "period_of_report_date",
+    #         "order": "asc",
+    #     }
+    #     raw = _get(url, params=params)
+    #     cache_path.write_text(json.dumps(raw))
 
-    # fin["bvps"] = np.where(
-    #     fin["equity"].notna() & fin["shares"].gt(0),
-    #     fin["equity"] / fin["shares"],
-    #     np.nan,
-    # )
+    # # Existing balance-sheet extraction (PB, shares)
+    # periods = extract_financial_periods(raw)
+    # periods = roll_forward_shares(periods)
 
-    # fin["fcf"] = np.where(
-    #     fin["operating_cf"].notna() & fin["capex"].notna(),
-    #     fin["operating_cf"] - fin["capex"],
-    #     np.nan,
-    # )
+    # bs_rows = []
+    # for p in periods:
+    #     if p["equity"] and p["shares"]:
+    #         bs_rows.append({
+    #             "period_end": pd.to_datetime(p["period_end"]),
+    #             "equity": p["equity"],
+    #             "diluted_shares": p["shares"],
+    #             "bvps": p["equity"] / p["shares"],
+    #         })
 
-    # return fin[
-    #     [
-    #         "period_end",
-    #         "equity",
-    #         "shares",
-    #         "bvps",
-    #         "revenue",
-    #         "net_income",
-    #         "operating_cf",
-    #         "capex",
-    #         "fcf",
-    #     ]
-    # ]
+    # bs_df = pd.DataFrame(bs_rows)
+
+    # growth_df = extract_growth_fundamentals(raw)
+
+    # if bs_df.empty:
+    #     return growth_df
+
+    # if growth_df.empty:
+    #     return bs_df
+
+    # fin = pd.merge(bs_df, growth_df, on="period_end", how="outer")
+
+    # for col in ["bvps", "diluted_shares"]:
+    #     if col not in fin.columns:
+    #         fin[col] = np.nan
+
+    # return fin.sort_values("period_end").reset_index(drop=True)
 
     cache_path = _fin_cache_path(ticker)
+
     if cache_path.exists():
         raw = json.loads(cache_path.read_text())
     else:
@@ -465,53 +455,173 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
         raw = _get(url, params=params)
         cache_path.write_text(json.dumps(raw))
 
-    # Existing balance-sheet extraction (PB, shares)
-    periods = extract_financial_periods(raw)
-    periods = roll_forward_shares(periods)
+    rows = []
 
-    bs_rows = []
-    for p in periods:
-        if p["equity"] and p["shares"]:
-            bs_rows.append({
-                "period_end": pd.to_datetime(p["period_end"]),
-                "equity": p["equity"],
-                "diluted_shares": p["shares"],
-                "bvps": p["equity"] / p["shares"],
-            })
+    for blk in raw.get("results", []):
+        fin = blk.get("financials", {}) or {}
+        is_ = fin.get("income_statement", {}) or {}
+        bs = fin.get("balance_sheet", {}) or {}
+        cf = fin.get("cash_flow_statement", {}) or {}
 
-    bs_df = pd.DataFrame(bs_rows)
+        period_end = blk.get("period_of_report_date")
+        if not period_end:
+            continue
 
-    growth_df = extract_growth_fundamentals(raw)
+        # -------- Raw fundamentals --------
+        revenue = is_.get("revenues", {}).get("value")
+        cogs = is_.get("cost_of_revenue", {}).get("value")
+        net_income = is_.get("net_income_loss", {}).get("value")
 
-    if bs_df.empty:
-        return growth_df
+        total_assets = bs.get("assets", {}).get("value")
+        equity = bs.get("equity", {}).get("value")
+        liabilities = bs.get("liabilities", {}).get("value")
+        shares = bs.get("weighted_average_shares_diluted", {}).get("value")
 
-    if growth_df.empty:
-        return bs_df
+        operating_cf = cf.get(
+            "net_cash_flow_from_operating_activities", {}
+        ).get("value")
 
-    fin = pd.merge(bs_df, growth_df, on="period_end", how="outer")
+        # -------- Market cap (point-in-time safe) --------
+        market_cap = None
+        if equity is not None and shares:
+            bvps = equity / shares
+            market_cap = bvps * shares
 
-    for col in ["bvps", "diluted_shares"]:
-        if col not in fin.columns:
-            fin[col] = np.nan
+        rows.append({
+            "ticker": ticker,
+            "period_end": pd.to_datetime(period_end),
 
-    return fin.sort_values("period_end").reset_index(drop=True)
+            # raw
+            "market_cap": market_cap,
+            "revenue": revenue,
+            "cogs": cogs,
+            "total_assets": total_assets,
+            "net_income": net_income,
+            "equity": equity,
+            "liabilities": liabilities,
+            "operating_cf": operating_cf,
+            "shares": shares,
 
+            # derived
+            "pb_ratio": (
+                market_cap / equity
+                if market_cap and equity
+                else np.nan
+            ),
+            "earnings_yield": (
+                net_income / market_cap
+                if net_income and market_cap
+                else np.nan
+            ),
+            "cf_yield": (
+                operating_cf / market_cap
+                if operating_cf and market_cap
+                else np.nan
+            ),
+            "liabilities_to_equity": (
+                liabilities / equity
+                if liabilities and equity
+                else np.nan
+            ),
+        })
+
+    fin_df = pd.DataFrame(rows)
+
+    if fin_df.empty:
+        return fin_df
+
+    fin_df = fin_df.sort_values("period_end").reset_index(drop=True)
+    return fin_df
 
 def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
+#     """
+#     For each trading day, attach the most recent prior quarterly filing:
+#       PB = close / BVPS
+#       MarketCap = close * diluted_shares
+#     """
+#     out = daily.copy()
+
+#     REQUIRED = {"period_end", "bvps", "diluted_shares"}
+#     if fin.empty or not REQUIRED.issubset(fin.columns):
+#         out["pb_ratio"] = np.nan
+#         out["market_cap"] = np.nan
+#         out["fin_period_used"] = pd.NaT
+#         out["shares_outstanding_used"] = np.nan
+#         return out
+
+#     f = fin.rename(columns={"period_end": "fin_period_end"}).copy()
+
+#     left = out.copy()
+#     left["date_dt"] = pd.to_datetime(left["date"])
+#     right = f.copy()
+#     right["fin_dt"] = pd.to_datetime(right["fin_period_end"])
+
+#     left = left.sort_values("date_dt").set_index("date_dt")
+#     right = right.sort_values("fin_dt").set_index("fin_dt")
+
+#     merged = pd.merge_asof(
+#         left, right, left_index=True, right_index=True, direction="backward"
+#     )
+
+#     merged["pb_ratio"] = np.where(
+#         merged["bvps"].notna() & (merged["bvps"] != 0),
+#         merged["close"] / merged["bvps"],
+#         np.nan,
+#     )
+#     merged["market_cap"] = merged["close"] * merged["diluted_shares"]
+
+#     fin_end_dt = pd.to_datetime(merged["fin_period_end"], errors="coerce")
+#     merged["fin_period_used"] = fin_end_dt.dt.date
+#     merged["shares_outstanding_used"] = merged["diluted_shares"]
+
+#     keep = [
+#         "date",
+#         "open",
+#         "close",
+#         "high",
+#         "low",
+#         "volume",
+#         "daily_change",
+#         "daily_change_pct",
+#         "pb_ratio",
+#         "market_cap",
+#         "fin_period_used",
+#         "shares_outstanding_used",
+#     ]
+#     merged.reset_index(drop=True, inplace=True)
+#     return merged[keep]
     """
-    For each trading day, attach the most recent prior quarterly filing:
-      PB = close / BVPS
-      MarketCap = close * diluted_shares
+    For each trading day, attach the most recent prior quarterly filing and compute:
+      - Market cap
+      - PB ratio
+      - Earnings yield
+      - Cash flow yield
+
+    Pass through raw quarterly fundamentals unchanged.
     """
+
     out = daily.copy()
 
-    REQUIRED = {"period_end", "bvps", "diluted_shares"}
+    REQUIRED = {
+        "period_end",
+        "equity",
+        "shares",
+        "net_income",
+        "operating_cf",
+        "liabilities",
+    }
+
     if fin.empty or not REQUIRED.issubset(fin.columns):
-        out["pb_ratio"] = np.nan
-        out["market_cap"] = np.nan
-        out["fin_period_used"] = pd.NaT
-        out["shares_outstanding_used"] = np.nan
+        for col in [
+            "market_cap",
+            "pb_ratio",
+            "earnings_yield",
+            "cf_yield",
+            "liabilities_to_equity",
+            "fin_period_used",
+            "shares_outstanding_used",
+        ]:
+            out[col] = np.nan
         return out
 
     f = fin.rename(columns={"period_end": "fin_period_end"}).copy()
@@ -528,16 +638,52 @@ def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
         left, right, left_index=True, right_index=True, direction="backward"
     )
 
+    # -----------------------
+    # Market cap (daily price × quarterly shares)
+    # -----------------------
+    merged["market_cap"] = merged["close"] * merged["shares"]
+
+    # -----------------------
+    # Price-to-book
+    # -----------------------
     merged["pb_ratio"] = np.where(
-        merged["bvps"].notna() & (merged["bvps"] != 0),
-        merged["close"] / merged["bvps"],
+        merged["equity"].notna() & (merged["equity"] != 0),
+        merged["market_cap"] / merged["equity"],
         np.nan,
     )
-    merged["market_cap"] = merged["close"] * merged["diluted_shares"]
 
-    fin_end_dt = pd.to_datetime(merged["fin_period_end"], errors="coerce")
-    merged["fin_period_used"] = fin_end_dt.dt.date
-    merged["shares_outstanding_used"] = merged["diluted_shares"]
+    # -----------------------
+    # Earnings yield
+    # -----------------------
+    merged["earnings_yield"] = np.where(
+        merged["net_income"].notna() & (merged["market_cap"] > 0),
+        merged["net_income"] / merged["market_cap"],
+        np.nan,
+    )
+
+    # -----------------------
+    # Cash flow yield
+    # -----------------------
+    merged["cf_yield"] = np.where(
+        merged["operating_cf"].notna() & (merged["market_cap"] > 0),
+        merged["operating_cf"] / merged["market_cap"],
+        np.nan,
+    )
+
+    # -----------------------
+    # Leverage
+    # -----------------------
+    merged["liabilities_to_equity"] = np.where(
+        merged["equity"].notna() & (merged["equity"] != 0),
+        merged["liabilities"] / merged["equity"],
+        np.nan,
+    )
+
+    # Metadata
+    merged["fin_period_used"] = pd.to_datetime(
+        merged["fin_period_end"], errors="coerce"
+    ).dt.date
+    merged["shares_outstanding_used"] = merged["shares"]
 
     keep = [
         "date",
@@ -548,11 +694,28 @@ def attach_pb_and_mcap(daily: pd.DataFrame, fin: pd.DataFrame) -> pd.DataFrame:
         "volume",
         "daily_change",
         "daily_change_pct",
-        "pb_ratio",
+
+        # pricing & valuation
         "market_cap",
+        "pb_ratio",
+        "earnings_yield",
+        "cf_yield",
+
+        # balance-sheet
+        "liabilities_to_equity",
+
+        # fundamentals (passed through)
+        "revenue",
+        "cogs",
+        "total_assets",
+        "net_income",
+        "equity",
+
+        # metadata
         "fin_period_used",
         "shares_outstanding_used",
     ]
+
     merged.reset_index(drop=True, inplace=True)
     return merged[keep]
 
