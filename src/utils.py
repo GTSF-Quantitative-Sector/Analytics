@@ -1,13 +1,26 @@
 import pandas as pd
 from datetime import date, timedelta
 from pathlib import Path
+from portfolio import Portfolio
+from dateutil.relativedelta import relativedelta
 
 TICKER_RENAMES = {
     'FISV': 'FI',
 }
 
+def build_portfolio(holdings_path, api_client, time_frame_years):
+    holdings_df = parse_xlsx(holdings_path)
+    portfolio = Portfolio(holdings_df)
+
+    start_date = date.today() - relativedelta(years=time_frame_years)
+
+    build_historical_prices(api_client, portfolio, start_date)
+    daily_update_portfolio(portfolio, api_client)
+
+    return portfolio
+
 #Builds portfolio historical prices
-def build_portfolio(api_client, portfolio, start_date):
+def build_historical_prices(api_client, portfolio, start_date):
     stock_tickers = portfolio.holdings.loc[
         portfolio.holdings['Stock/Bond'] == 'Stock', 'Ticker'
     ]
@@ -34,7 +47,7 @@ def build_portfolio(api_client, portfolio, start_date):
 #Updates metrics with current data
 #Meant to be called once a day after close
 #build_portfolio must be called first
-def update_portfolio(portfolio, api_client):
+def daily_update_portfolio(portfolio, api_client):
     holdings = portfolio.holdings
     today = date.today()
     start = today - timedelta(days=5)

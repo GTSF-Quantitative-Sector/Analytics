@@ -11,19 +11,15 @@ def main():
     api_key = os.getenv("MASSIVE_API_KEY")
     api_client = APIClient(api_key)
 
-    holdings_df = parse_xlsx("data/holdings.xlsx")
-    portfolio = Portfolio(holdings_df)
-
     time_frame_years = 5
-    start_date = date.today() - relativedelta(years=time_frame_years)
-    build_portfolio(api_client, portfolio, start_date)
-    update_portfolio(portfolio, api_client)
+    portfolio = build_portfolio("data/holdings.xlsx", api_client, time_frame_years)
 
+    start_date = date.today() - relativedelta(years=time_frame_years)
     var = portfolio.find_var(start_date, date.today())
     monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
 
-    print(monte_carlo)
-
+    # print(var)
+    # print(monte_carlo)
     # portfolio.holdings.to_csv('data/holdings_output.csv')
     # portfolio.historical_prices.to_csv('data/historical_prices_output.csv')
 
