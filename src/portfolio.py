@@ -23,7 +23,7 @@ class Portfolio:
         return prices.pct_change(fill_method=None).iloc[1:].dropna(how='all')
 
     #Weight-adjusted portfolio return series using dynamic daily weights
-    def portfolio_returns(self, start: date, end: date, sector: str | None = None) -> pd.Series:
+    def weighted_portfolio_returns(self, start: date, end: date, sector: str | None = None) -> pd.Series:
         df = self._sector_filter(sector)
         tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
         shares = df.set_index('Ticker').loc[tickers, 'Share Count']
@@ -74,7 +74,7 @@ class Portfolio:
     #Parametric Value at Risk
     #Returns dict: var, dollar_var, expected_shortfall, confidence, method
     def find_var(self, start: date, end: date, confidence: float = 0.95, horizon_days: int = 1, sector: str | None = None) -> dict:
-        p_ret = self.portfolio_returns(start, end, sector)
+        p_ret = self.weighted_portfolio_returns(start, end, sector)
         mu = p_ret.mean()
         sigma = p_ret.std()
 
@@ -107,7 +107,7 @@ class Portfolio:
     def run_monte_carlo(self, start: date, end: date, n_simulations: int = 10_000, horizon_days: int = 21, seed: int | None = 42, sector: str | None = None) -> dict:
         rng = np.random.default_rng(seed)
 
-        port = self.portfolio_returns(start, end, sector=sector)
+        port = self.weighted_portfolio_returns(start, end, sector=sector)
         port = pd.Series(port).dropna()
 
         mu = float(port.mean())
