@@ -2,6 +2,10 @@ import pandas as pd
 from datetime import date, timedelta
 from pathlib import Path
 
+TICKER_RENAMES = {
+    'FISV': 'FI',
+}
+
 #Builds portfolio historical prices
 def build_portfolio(api_client, portfolio, start_date):
     stock_tickers = portfolio.holdings.loc[
@@ -14,6 +18,12 @@ def build_portfolio(api_client, portfolio, start_date):
         try:
             bars = api_client.get_daily_bars(ticker, start_date, today)
             price_series[ticker] = bars.set_index('date')['close']
+
+            if ticker in TICKER_RENAMES:
+                old_bars = api_client.get_daily_bars(TICKER_RENAMES[ticker], start_date, today)
+                old_price_series = old_bars.set_index('date')['close']
+                price_series[ticker] = pd.concat([price_series[ticker], old_price_series]).sort_index()
+
         except Exception:
             continue
 

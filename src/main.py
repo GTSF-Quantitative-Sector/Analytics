@@ -19,8 +19,10 @@ def main():
     build_portfolio(api_client, portfolio, start_date)
     update_portfolio(portfolio, api_client)
 
-    portfolio.holdings.to_csv('data/holdings_output.csv')
-    portfolio.historical_prices.to_csv('data/historical_prices_output.csv')
+    var = portfolio.find_var(start_date, date.today())
+
+    # portfolio.holdings.to_csv('data/holdings_output.csv')
+    # portfolio.historical_prices.to_csv('data/historical_prices_output.csv')
 
 if __name__ == "__main__":
     main()

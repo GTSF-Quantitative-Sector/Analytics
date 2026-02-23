@@ -1,10 +1,10 @@
 from datetime import date
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 #Portfolio class
 #Used to hold stocks and run all analysis
-#holdings df has columns: ticker, shares, sector
 #Passing sector to any method filters to just that sector
 class Portfolio:
 
@@ -12,17 +12,25 @@ class Portfolio:
     def __init__(self, holdings: pd.DataFrame) -> None:
         self.holdings = holdings
 
-    #Per-asset return matrix over a date range. Returns DataFrame (dates x tickers)
-    def get_returns(self, start: date, end: date, freq: str = "daily", sector: str | None = None) -> pd.DataFrame:
-        df = self._sector_filter(sector)
+        #Built using API client
+        self.historical_prices = None
 
-        pass
+    #Per-asset return matrix over a date range. Returns DataFrame (dates x tickers)
+    def get_returns(self, start: date, end: date, sector: str | None = None) -> pd.DataFrame:
+        df = self._sector_filter(sector)
+        tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
+        prices = self.historical_prices[tickers].loc[start:end]
+        return prices.pct_change().iloc[1:].dropna(how='all')
 
     #Weight-adjusted portfolio return series
-    def portfolio_returns(self, start: date, end: date, freq: str = "daily", sector: str | None = None) -> pd.Series:
+    def portfolio_returns(self, start: date, end: date, sector: str | None = None) -> pd.Series:
         df = self._sector_filter(sector)
+        tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
+        values = df.set_index('Ticker').loc[tickers, 'Value']
+        weights = values / values.sum()
 
-        pass
+        returns = self.get_returns(start, end, sector=sector)
+        return returns[tickers].mul(weights, axis=1).sum(axis=1)
 
     #Covariance matrix of asset returns. method: 'sample', 'ledoit_wolf', or 'ewma'
     def covariance_matrix(self, start: date, end: date, method: str = "ledoit_wolf", sector: str | None = None) -> pd.DataFrame:
@@ -59,12 +67,23 @@ class Portfolio:
 
         pass
 
-    #Value at Risk. Let's use parametric method for now
+    #Parametric Value at Risk
     #Returns dict: var, dollar_var, expected_shortfall, confidence, method
     def find_var(self, start: date, end: date, confidence: float = 0.95, horizon_days: int = 1, sector: str | None = None) -> dict:
-        df = self._sector_filter(sector)
+        p_ret = self.portfolio_returns(start, end, sector)
+        mu = p_ret.mean()
+        sigma = p_ret.std()
 
-        pass
+        z_score = norm.ppf(1 - confidence)
+        var = -(mu * horizon_days + z_score * sigma * np.sqrt(horizon_days))
+        es = -(mu * horizon_days - sigma * np.sqrt(horizon_days) * norm.pdf(z_score) / (1 - confidence))
+
+        return {
+            "var_pct": var,
+            "expected_shortfall": es,
+            "confidence": confidence,
+            "horizon": horizon_days
+        }
 
     #Per-position risk contribution. Returns DataFrame: marginal, component, pct_contribution
     def find_marginal_risk(self, start: date, end: date, cov_method: str = "ledoit_wolf", sector: str | None = None) -> pd.DataFrame:
