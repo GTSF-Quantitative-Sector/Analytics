@@ -33,7 +33,8 @@ class Portfolio:
         daily_weights = market_values.div(market_values.sum(axis=1), axis=0)
 
         returns = self.get_returns(start, end, sector=sector)
-        daily_weights = daily_weights.shift(1).loc[returns.index]
+        daily_weights = daily_weights.shift(1).loc[returns.index].dropna(how='all')
+        returns = returns.loc[daily_weights.index]
         return (returns[tickers] * daily_weights).sum(axis=1)
 
     #Covariance matrix of asset returns. method: 'sample', 'ledoit_wolf', or 'ewma'
@@ -76,7 +77,7 @@ class Portfolio:
     def find_var(self, start: date, end: date, confidence: float = 0.95, horizon_days: int = 1, sector: str | None = None) -> dict:
         p_ret = self.weighted_portfolio_returns(start, end, sector)
         mu = p_ret.mean()
-        sigma = p_ret.std()
+        sigma = p_ret.std(ddof=1)
 
         z_score = norm.ppf(1 - confidence)
         var = -(mu * horizon_days + z_score * sigma * np.sqrt(horizon_days))
