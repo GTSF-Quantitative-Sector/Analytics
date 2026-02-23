@@ -8,7 +8,7 @@ import pandas as pd
 #Passing sector to any method filters to just that sector
 class Portfolio:
 
-    #holdings: DataFrame with columns [ticker, shares, sector, prices]
+    #holdings: DataFrame with columns [Ticker, Description, Share Count, Purchase Date, Purchase Price, Sector, Stock/Bond]
     def __init__(self, holdings: pd.DataFrame) -> None:
         self.holdings = holdings
 
@@ -95,4 +95,4 @@ class Portfolio:
     def _sector_filter(self, sector: str | None) -> pd.DataFrame:
         if sector is None:
             return self.holdings
-        return self.holdings[self.holdings['sector'] == sector]
+        return self.holdings[self.holdings['Sector'] == sector]

@@ -1,10 +1,60 @@
 import pandas as pd
+from datetime import date, timedelta
 from pathlib import Path
 
-def build_portfolio(api_client, holdings, start_date, end_date):
-    pass
+#Builds portfolio historical prices
+def build_portfolio(api_client, portfolio, start_date):
+    stock_tickers = portfolio.holdings.loc[
+        portfolio.holdings['Stock/Bond'] == 'Stock', 'Ticker'
+    ]
 
-def parse_xls(path):
+    today = date.today()
+    price_series = {}
+    for ticker in stock_tickers:
+        try:
+            bars = api_client.get_daily_bars(ticker, start_date, today)
+            price_series[ticker] = bars.set_index('date')['close']
+        except Exception:
+            continue
+
+    portfolio.historical_prices = pd.DataFrame(price_series)
+    portfolio.historical_prices.index.name = 'date'
+
+#Updates metrics with current data
+#Meant to be called once a day after close
+#build_portfolio must be called first
+def update_portfolio(portfolio, api_client):
+    holdings = portfolio.holdings
+    today = date.today()
+    start = today - timedelta(days=5)
+
+    prices = []
+    for _, row in holdings.iterrows():
+        ticker = row['Ticker']
+        if row['Stock/Bond'] != 'Stock':
+            prices.append(None)
+            continue
+
+        try:
+            bars = api_client.get_daily_bars(ticker, start, today)
+            prices.append(bars['close'].iloc[-1])
+        except Exception:
+            prices.append(None)
+
+    holdings['Price'] = prices
+    holdings['Value'] = holdings['Share Count'] * holdings['Price']
+    holdings['% Gain to Date'] = (holdings['Price'] - holdings['Purchase Price']) / holdings['Purchase Price'] * 100
+    portfolio.holdings = holdings
+
+    if today not in portfolio.historical_prices.index:
+        new_row = pd.Series(
+            {ticker: price for ticker, price in zip(holdings['Ticker'], prices) if price is not None},
+            name=today,
+        )
+        portfolio.historical_prices = pd.concat([portfolio.historical_prices, new_row.to_frame().T])
+
+#Parses the holdings xlsx file to build the holdings df
+def parse_xlsx(path):
     HOLDINGS_PATH = Path(path)
     df = pd.read_excel(HOLDINGS_PATH, header=0, sheet_name='Sector Holdings')
     df.columns = [c.strip() if isinstance(c, str) else c for c in df.columns]
