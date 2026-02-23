@@ -20,17 +20,21 @@ class Portfolio:
         df = self._sector_filter(sector)
         tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
         prices = self.historical_prices[tickers].loc[start:end]
-        return prices.pct_change().iloc[1:].dropna(how='all')
+        return prices.pct_change(fill_method=None).iloc[1:].dropna(how='all')
 
-    #Weight-adjusted portfolio return series
+    #Weight-adjusted portfolio return series using dynamic daily weights
     def portfolio_returns(self, start: date, end: date, sector: str | None = None) -> pd.Series:
         df = self._sector_filter(sector)
         tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
-        values = df.set_index('Ticker').loc[tickers, 'Value']
-        weights = values / values.sum()
+        shares = df.set_index('Ticker').loc[tickers, 'Share Count']
+
+        prices = self.historical_prices[tickers].loc[start:end]
+        market_values = prices.mul(shares, axis=1)
+        daily_weights = market_values.div(market_values.sum(axis=1), axis=0)
 
         returns = self.get_returns(start, end, sector=sector)
-        return returns[tickers].mul(weights, axis=1).sum(axis=1)
+        daily_weights = daily_weights.shift(1).loc[returns.index]
+        return (returns[tickers] * daily_weights).sum(axis=1)
 
     #Covariance matrix of asset returns. method: 'sample', 'ledoit_wolf', or 'ewma'
     def covariance_matrix(self, start: date, end: date, method: str = "ledoit_wolf", sector: str | None = None) -> pd.DataFrame:
@@ -101,9 +105,30 @@ class Portfolio:
     #Simulate portfolio return paths
     #Returns dict: simulated_returns, mean, median, var_95, expected_shortfall
     def run_monte_carlo(self, start: date, end: date, n_simulations: int = 10_000, horizon_days: int = 21, seed: int | None = 42, sector: str | None = None) -> dict:
-        df = self._sector_filter(sector)
+        rng = np.random.default_rng(seed)
 
-        pass
+        port = self.portfolio_returns(start, end, sector=sector)
+        port = pd.Series(port).dropna()
+
+        mu = float(port.mean())
+        sigma = float(port.std(ddof=1))
+
+        sim_daily = rng.normal(loc=mu, scale=sigma, size=(n_simulations, horizon_days))
+        simulated_returns = np.prod(1.0 + sim_daily, axis=1) - 1.0
+
+        mean = float(np.mean(simulated_returns))
+        median = float(np.median(simulated_returns))
+        var_95 = float(np.quantile(simulated_returns, 0.05))
+        tail = simulated_returns[simulated_returns <= var_95]
+        expected_shortfall = float(np.mean(tail)) if tail.size else var_95
+
+        return {
+            "simulated_returns": simulated_returns,
+            "mean": mean,
+            "median": median,
+            "var_95": var_95,
+            "expected_shortfall": expected_shortfall,
+        }
 
     #We will worry about this later
     def run_scenario(self, factor_returns: pd.DataFrame, shocks: dict[str, float], start: date, end: date) -> dict:

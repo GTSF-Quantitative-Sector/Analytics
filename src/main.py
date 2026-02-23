@@ -14,12 +14,15 @@ def main():
     holdings_df = parse_xlsx("data/holdings.xlsx")
     portfolio = Portfolio(holdings_df)
 
-    time_frame_years = 1
+    time_frame_years = 5
     start_date = date.today() - relativedelta(years=time_frame_years)
     build_portfolio(api_client, portfolio, start_date)
     update_portfolio(portfolio, api_client)
 
     var = portfolio.find_var(start_date, date.today())
+    monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
+
+    print(monte_carlo)
 
     # portfolio.holdings.to_csv('data/holdings_output.csv')
     # portfolio.historical_prices.to_csv('data/historical_prices_output.csv')

@@ -5,7 +5,7 @@ from datetime import date
 def run_monte_carlo(self, start: date, end: date, n_simulations: int = 10_000, horizon_days: int = 21, seed: int | None = 42,
     sector: str | None = None,
 ) -> dict:
-    
+
     if n_simulations <= 0:
         raise ValueError("n_simulations must be > 0")
     if horizon_days <= 0:
