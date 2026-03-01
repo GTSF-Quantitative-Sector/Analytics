@@ -5,6 +5,17 @@ from dotenv import load_dotenv
 from utils import *
 from api_client import APIClient
 from portfolio import Portfolio
+from visualizations import (
+    plot_cumulative_returns,
+    plot_rolling_volatility,
+    plot_sector_rolling_volatility,
+    plot_drawdown,
+    plot_return_distribution,
+    plot_monte_carlo,
+    plot_component_risk,
+    plot_correlation_heatmap,
+    plot_sector_returns,
+)
 
 def main():
     load_dotenv()
@@ -17,11 +28,6 @@ def main():
     start_date = date.today() - relativedelta(years=time_frame_years)
     var = portfolio.find_var(start_date, date.today())
     monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
-
-    # print(var)
-    # print(monte_carlo)
-    # portfolio.holdings.to_csv('data/holdings_output.csv')
-    # portfolio.historical_prices.to_csv('data/historical_prices_output.csv')
 
 if __name__ == "__main__":
     main()
