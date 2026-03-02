@@ -32,11 +32,11 @@ def build_historical_prices(api_client, portfolio, start_date):
             bars = api_client.get_daily_bars(ticker, start_date, today)
             price_series[ticker] = bars.set_index('date')['close']
 
-            if ticker in TICKER_RENAMES:
-                old_bars = api_client.get_daily_bars(TICKER_RENAMES[ticker], start_date, today)
-                old_price_series = old_bars.set_index('date')['close']
-                price_series[ticker] = pd.concat([price_series[ticker], old_price_series]).sort_index()
-                price_series[ticker] = price_series[ticker][~price_series[ticker].index.duplicated(keep='first')]
+            # if ticker in TICKER_RENAMES:
+            #     old_bars = api_client.get_daily_bars(TICKER_RENAMES[ticker], start_date, today)
+            #     old_price_series = old_bars.set_index('date')['close']
+            #     price_series[ticker] = pd.concat([price_series[ticker], old_price_series]).sort_index()
+            #     price_series[ticker] = price_series[ticker][~price_series[ticker].index.duplicated(keep='first')]
 
         except Exception:
             continue

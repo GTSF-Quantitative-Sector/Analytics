@@ -2,6 +2,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+from sklearn.covariance import LedoitWolf
 
 #Portfolio class
 #Used to hold stocks and run all analysis
@@ -37,11 +38,27 @@ class Portfolio:
         returns = returns.loc[daily_weights.index]
         return (returns[tickers] * daily_weights).sum(axis=1)
 
-    #Covariance matrix of asset returns. method: 'sample', 'ledoit_wolf', or 'ewma'
-    def covariance_matrix(self, start: date, end: date, method: str = "ledoit_wolf", sector: str | None = None) -> pd.DataFrame:
-        df = self._sector_filter(sector)
+    #Covariance matrix of asset returns. method: 'ledoit_wolf' or 'ewma'
+    #Returns DataFrame (tickers x tickers)
+    def covariance_matrix(self, start: date, end: date, method: str = "lw", ewma_span: int = 33, sector: str | None = None) -> pd.DataFrame:
+        if (method not in ["lw", "ewma"]):
+            raise ValueError("Method must be ledoit wolf (lw) or exponentially weighted moving average (ewma)")
 
-        pass
+        returns = self.get_returns(start, end, sector=sector)
+        returns = returns.dropna(axis=1, how='all').ffill().bfill()
+
+        tickers = returns.columns
+
+        if method == "lw":
+            lw = LedoitWolf().fit(returns.values)
+            cov = pd.DataFrame(lw.covariance_, index=tickers, columns=tickers)
+        elif method == "ewma":
+            ewm_cov = returns.ewm(span=ewma_span).cov(pairwise=True)
+            last_date = ewm_cov.index.get_level_values(0)[-1]
+            cov = ewm_cov.loc[last_date].copy()
+            cov.columns = tickers
+
+        return cov
 
     #Score each holding on Quality, Value, Growth, Momentum
     #ratios: {ticker: {pe, pb, roe, ...}}. price_history: daily prices for momentum
@@ -90,11 +107,38 @@ class Portfolio:
             "horizon": horizon_days
         }
 
-    #Per-position risk contribution. Returns DataFrame: marginal, component, pct_contribution
-    def find_marginal_risk(self, start: date, end: date, cov_method: str = "ledoit_wolf", sector: str | None = None) -> pd.DataFrame:
-        df = self._sector_filter(sector)
+    #Per-position risk contribution. Returns DataFrame indexed by ticker: marginal, component, pct_contribution
+    def find_risk_contribution(self, start: date, end: date, cov_method: str = "lw", sector: str | None = None) -> pd.DataFrame:
+        cov_matrix = self.covariance_matrix(start, end, method=cov_method, sector=sector)
+        tickers = list(cov_matrix.columns)
 
-        pass
+        holdings = self._sector_filter(sector)
+        shares = holdings.set_index('Ticker').loc[tickers, 'Share Count']
+        first_prices = self.historical_prices[tickers].loc[start:end].dropna(how='all').iloc[0]
+
+        valid = first_prices.dropna().index
+        tickers = [t for t in tickers if t in valid]
+        shares = shares.loc[tickers]
+        first_prices = first_prices.loc[tickers]
+        cov_matrix = cov_matrix.loc[tickers, tickers]
+
+        market_values = shares * first_prices
+        w = (market_values / market_values.sum()).values
+
+        cov = cov_matrix.values
+        sigma_w = cov @ w
+        port_var = w @ sigma_w
+        port_std = np.sqrt(port_var)
+
+        mctr = sigma_w / port_std
+        cctr = w * mctr
+        pct_contribution = cctr / cctr.sum()
+
+        return pd.DataFrame({
+            "marginal": mctr,
+            "component": cctr,
+            "pct_contribution": pct_contribution,
+        }, index=tickers)
 
     #Split portfolio variance into factor risk vs idiosyncratic risk
     #Returns dict: total_var, factor_var, idio_var, pct_factor, pct_idio, per_factor
