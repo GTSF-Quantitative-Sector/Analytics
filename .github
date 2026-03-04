@@ -1,0 +1,40 @@
+.github/workflows/deploy.yml
+name: Deploy to AWS Lambda
+on:
+  push:
+    branches: [ main ]  # Runs every time you push to 'main'
+
+permissions:
+  id-token: write      # Required for the "handshake" with AWS
+  contents: read       # Required to read your code
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # Recommended stable version
+
+      - name: Install Dependencies
+        run: |
+          # Bundles your libraries into the zip package
+          pip install -r requirements.txt -t .
+          zip -r function.zip . -x "*.git*" ".github*" 
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update Lambda Code
+        run: |
+          # Pushes the zipped code and dependencies to AWS
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --zip-file fileb://function.zip
