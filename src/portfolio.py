@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from sklearn.covariance import LedoitWolf
+import statsmodels.api as sm
 
 #Portfolio class
 #Used to hold stocks and run all analysis
@@ -177,10 +178,46 @@ class Portfolio:
             "expected_shortfall": expected_shortfall,
         }
 
-    #We will worry about this later
+    #We're worrying about this now
     def run_scenario(self, factor_returns: pd.DataFrame, shocks: dict[str, float], start: date, end: date) -> dict:
         pass
 
+
+    #OLS regression of each stock's returns against macro factors (dVIX, dY10)
+    #todo: add more macro factors (credit spread, oil prices, etc), look into isolating correlations from only crisis regimes
+    def run_macro_ols(self, start: date, end: date, sector: str | None = None) -> pd.DataFrame:
+        df = self._sector_filter(sector)
+        tickers = [t for t in df['Ticker'] if t in self.historical_prices.columns]
+
+        data = self.prices_and_macro.loc[start:end]
+        stock_returns = data[tickers].pct_change(fill_method=None).iloc[1:]
+        dVIX = data['VIX'].diff().iloc[1:]
+        dY10 = data['Y10'].diff().iloc[1:]
+
+        X = sm.add_constant(pd.DataFrame({'dVIX': dVIX, 'dY10': dY10}))
+
+        results = []
+        for t in tickers:
+            if stock_returns[t].dropna().empty:
+                continue
+
+            model = sm.OLS(stock_returns[t], X, missing="drop").fit()
+
+            results.append({
+                "ticker": t,
+                "alpha": float(model.params.get("const", np.nan)),
+                "beta_vix": float(model.params.get("dVIX", np.nan)),
+                "beta_10y": float(model.params.get("dY10", np.nan)),
+                "t_beta_vix": float(model.tvalues.get("dVIX", np.nan)),
+                "t_beta_10y": float(model.tvalues.get("dY10", np.nan)),
+                "p_beta_vix": float(model.pvalues.get("dVIX", np.nan)),
+                "p_beta_10y": float(model.pvalues.get("dY10", np.nan)),
+                "r2": float(model.rsquared),
+                "resid_std": float(np.std(model.resid, ddof=1)),
+                "n_obs": int(model.nobs),
+            })
+
+        return pd.DataFrame(results).set_index("ticker")
 
     #Helper method for applying sector filters when necessary
     def _sector_filter(self, sector: str | None) -> pd.DataFrame:

@@ -27,8 +27,11 @@ def main():
 
     start_date = date.today() - relativedelta(years=time_frame_years)
 
-    print(portfolio.historical_prices)
-    print(portfolio.macro_data)
+    # print(portfolio.historical_prices)
+    # print(portfolio.macro_data)
+    # print(portfolio.prices_and_macro)
+
+    print(portfolio.run_macro_ols(start_date, date.today()))
 
     # var = portfolio.find_var(start_date, date.today())
     # monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
