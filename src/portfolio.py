@@ -45,7 +45,7 @@ class Portfolio:
             raise ValueError("Method must be ledoit wolf (lw) or exponentially weighted moving average (ewma)")
 
         returns = self.get_returns(start, end, sector=sector)
-        returns = returns.dropna(axis=1, how='all').ffill().bfill()
+        returns = returns.dropna(axis=1, how='all').ffill().dropna()
 
         tickers = returns.columns
 

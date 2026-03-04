@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import requests_cache
 import pandas as pd
+import yfinance as yf
 
 #Class for getting financial data
 #Goal is to use Massive wherever possible
@@ -27,11 +28,27 @@ class APIClient:
             raise ValueError(f"No daily bars found for {ticker} between {start} and {end}")
 
         df = pd.DataFrame(data['results'])
+
         df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close', 'v': 'volume', 'vw': 'vwap', 't': 'date'})
         df['date'] = pd.to_datetime(df['date'], unit='ms').dt.date
 
         return df[['date', 'open', 'high', 'low', 'close', 'volume', 'vwap']]
 
+    #Fetch daily OHLC for an index via yfinance. Ticker should be the yfinance symbol (e.g. "^VIX", "^TNX")
+    #Have to use yfinance because Massive plan doesn't have access to index daily bars
+    def get_index_daily_bars(self, ticker: str, start: date, end: date, adjusted: bool = True) -> pd.DataFrame:
+        data = yf.download(ticker, start=str(start), end=str(end), auto_adjust=adjusted, progress=False)
+
+        if data is None or data.empty:
+            raise ValueError(f"No index data found for {ticker} between {start} and {end}")
+
+        df = data[['Open', 'High', 'Low', 'Close']].copy()
+        df.columns = ['open', 'high', 'low', 'close']
+        df.index = pd.to_datetime(df.index).date
+        df.index.name = 'date'
+        df = df.reset_index()
+
+        return df
 
     #Fetch financial ratios (P/E, P/B, ROE, D/E, etc.). Returns dict: ratio name -> value
     def get_ratios(self, ticker: str) -> dict:
@@ -40,7 +57,7 @@ class APIClient:
 
         data = self._get_response(url, params)
 
-        if data.get('resultsCount', 0) == 0:
+        if not data.get('results'):
             raise ValueError(f"No ratios data found for {ticker}")
 
         return data['results'][0]
@@ -57,17 +74,18 @@ class APIClient:
     def get_cash_flow_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
         return self._get_statements('cash-flow-statements', ticker, period, limit)
 
-    #Fetch treasury yields for a date. Returns dict: tenor -> yield value
+    #Fetch treasury yields for a date. Walks back up to 7 days to handle weekends/holidays/lag.
+    #Returns dict: tenor -> yield value
     def get_treasury_yields(self, as_of: date) -> dict:
         url = f'{self.base_url}/fed/v1/treasury-yields'
-        params = {'date': str(as_of)}
 
-        data = self._get_response(url, params)
+        for i in range(7):
+            params = {'date': str(as_of - timedelta(days=i))}
+            data = self._get_response(url, params)
+            if data.get('results'):
+                return data['results'][0]
 
-        if not data.get('results'):
-            raise ValueError(f"No treasury yield data for {as_of}")
-
-        return data['results'][0]
+        raise ValueError(f"No treasury yield data found within 7 days of {as_of}")
 
     def _get_statements(self, financials_type, ticker, period, limit):
         url = f'{self.base_url}/stocks/financials/v1/{financials_type}'

@@ -26,11 +26,12 @@ def main():
     portfolio = build_portfolio("data/holdings.xlsx", api_client, time_frame_years)
 
     start_date = date.today() - relativedelta(years=time_frame_years)
-    var = portfolio.find_var(start_date, date.today())
-    monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
-    marginal_risk = portfolio.find_risk_contribution(start_date, date.today())
+    # var = portfolio.find_var(start_date, date.today())
+    # monte_carlo = portfolio.run_monte_carlo(start_date, date.today(), horizon_days=100)
+    # marginal_risk = portfolio.find_risk_contribution(start_date, date.today())
 
-    print(marginal_risk)
+    print(api_client.get_treasury_yields(date.today() - timedelta(days=1)))
+    print(api_client.get_index_daily_bars("^VIX", start_date, date.today()))
 
 if __name__ == "__main__":
     main()
