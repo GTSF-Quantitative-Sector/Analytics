@@ -15,6 +15,8 @@ class Portfolio:
 
         #Built using API client
         self.historical_prices = None
+        self.macro_data = None
+        self.prices_and_macro = None
 
     #Per-asset return matrix over a date range. Returns DataFrame (dates x tickers)
     def get_returns(self, start: date, end: date, sector: str | None = None) -> pd.DataFrame:

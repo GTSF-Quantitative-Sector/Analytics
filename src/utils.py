@@ -15,7 +15,9 @@ def build_portfolio(holdings_path, api_client, time_frame_years):
     start_date = date.today() - relativedelta(years=time_frame_years)
 
     build_historical_prices(api_client, portfolio, start_date)
-    daily_update_portfolio(portfolio, api_client)
+    build_macro_data(api_client, portfolio, start_date)
+
+    portfolio.prices_and_macro = portfolio.historical_prices.join(portfolio.macro_data, how='inner')
 
     return portfolio
 
@@ -43,6 +45,24 @@ def build_historical_prices(api_client, portfolio, start_date):
 
     portfolio.historical_prices = pd.DataFrame(price_series)
     portfolio.historical_prices.index.name = 'date'
+
+#Builds macro data (VIX levels, 10Y treasury yield) aligned to portfolio trading dates
+#VIX from yfinance, 10Y yield from Massive treasury endpoint
+def build_macro_data(api_client, portfolio, start_date):
+    today = date.today()
+
+    # VIX via yfinance
+    vix_bars = api_client.get_index_daily_bars("^VIX", start_date, today)
+    vix = vix_bars.set_index('date')['close'].rename('VIX')
+
+    # 10Y yield from Massive (single bulk call, already ffilled for gaps)
+    yields = api_client.get_treasury_yields(start_date, today)
+    y10 = yields['yield_10_year'].rename('Y10')
+
+    macro = pd.DataFrame({'VIX': vix, 'Y10': y10})
+    macro.index.name = 'date'
+    portfolio.macro_data = macro
+
 
 #Updates metrics with current data
 #Meant to be called once a day after close

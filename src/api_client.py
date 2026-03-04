@@ -74,18 +74,22 @@ class APIClient:
     def get_cash_flow_statements(self, ticker: str, period: str = "quarterly", limit: int = 20) -> pd.DataFrame:
         return self._get_statements('cash-flow-statements', ticker, period, limit)
 
-    #Fetch treasury yields for a date. Walks back up to 7 days to handle weekends/holidays/lag.
-    #Returns dict: tenor -> yield value
-    def get_treasury_yields(self, as_of: date) -> dict:
+    #Fetch treasury yields over a date range. Returns DataFrame with date index and yield columns.
+    #Forward-fills to cover weekends/holidays.
+    def get_treasury_yields(self, start: date, end: date) -> pd.DataFrame:
         url = f'{self.base_url}/fed/v1/treasury-yields'
+        params = {'date.gte': str(start), 'date.lte': str(end), 'limit': 50000, 'sort': 'date.asc'}
 
-        for i in range(7):
-            params = {'date': str(as_of - timedelta(days=i))}
-            data = self._get_response(url, params)
-            if data.get('results'):
-                return data['results'][0]
+        data = self._get_response(url, params)
 
-        raise ValueError(f"No treasury yield data found within 7 days of {as_of}")
+        if not data.get('results'):
+            raise ValueError(f"No treasury yield data found between {start} and {end}")
+
+        df = pd.DataFrame(data['results'])
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        df = df.set_index('date').ffill()
+
+        return df
 
     def _get_statements(self, financials_type, ticker, period, limit):
         url = f'{self.base_url}/stocks/financials/v1/{financials_type}'
