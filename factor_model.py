@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from src.api_client import APIClient
+from sklearn.linear_model import LinearRegression
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from dotenv import load_dotenv
 # =========================
 # Config
 # =========================
-START_DATE = date(2020, 12, 15)
+START_DATE = date(2020, 12, 15) # user input
 END_DATE = date(2025, 12, 15)  # or up to today date.today()
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -32,7 +33,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 FIN_CACHE_DIR = Path(".cache_financials")
 FIN_CACHE_DIR.mkdir(exist_ok=True)
 TICKER_CACHE_PATH = Path(".cache_sp500_tickers.json")
-TICKER_LIST_PATH = Path("tickers.txt")
+TICKER_LIST_PATH = Path("tickers.txt") #change to our portfolio holdings
 SPY_PATH = DATA_DIR / "SPY.csv"
 
 # Rate limit knobs
@@ -231,9 +232,6 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
         ref_raw = _get(ref_url, params=ref_params)
         ref_cache_path.write_text(json.dumps(ref_raw))
 
-    # -----------------------------
-    # 2. Fetch cash flow statements
-    # -----------------------------
     cf_url = f"{BASE_VX}/stocks/financials/v1/cash-flow-statements"
     cf_params = {
         "tickers": ticker,
@@ -243,15 +241,11 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
 
     cf_raw = _get(cf_url, params=cf_params)
 
-    # Index cash flow by (fiscal_year, fiscal_period)
     cf_by_period = {}
     for blk in cf_raw.get("results", []):
         key = (blk.get("filing_date"))
         cf_by_period[key] = blk
 
-    # -----------------------------
-    # 3. Merge while building rows
-    # -----------------------------
     rows = []
 
     for blk in ref_raw.get("results", []):
@@ -264,10 +258,8 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
         if not filing_date:
             continue
 
-        # Pull matching cash flow
         cf_blk = cf_by_period.get(filing_date, {}) or {}
 
-        # -------- Raw fundamentals --------
         revenue = is_.get("revenues", {}).get("value")
         cogs = is_.get("cost_of_revenue", {}).get("value")
         net_income = is_.get("net_income_loss", {}).get("value")
@@ -277,10 +269,8 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
         liabilities = bs.get("liabilities", {}).get("value")
         shares = is_.get("diluted_average_shares", {}).get("value")
 
-        # Cashflow 
         operating_cf = cf_blk.get("net_cash_from_operating_activities")
 
-        # -------- Market cap (placeholder logic preserved) --------
         market_cap = 0
         if equity is not None and shares is not None:
             bvps = equity / shares
@@ -334,37 +324,30 @@ def attach_fin(daily: pd.DataFrame, fin: pd.DataFrame):
     daily_df['date'] = pd.to_datetime(daily_df['date'])
     quarterly_df['period_end'] = pd.to_datetime(quarterly_df['period_end'])
 
-    # Sort both for merge_asof
     daily_df = daily_df.sort_values('date')
     quarterly_df = quarterly_df.sort_values('period_end')
-
-    # Merge: for each daily row, find last quarter_end <= date
     merged_df = pd.merge_asof(
         daily_df,
         quarterly_df,
         left_on='date',
         right_on='period_end',
-        direction='backward'  # last available fundamentals
+        direction='backward'  
     )
 
-    # Compute market cap: close price * shares
     merged_df['market_cap'] = merged_df['close'] * merged_df['shares']
 
-    # Compute PB ratio: market_cap / equity
     merged_df['pb_ratio'] = np.where(
         (merged_df['market_cap'].notna()) & (merged_df['equity'] > 0),
         merged_df['market_cap'] / merged_df['equity'],
         np.nan
     )
 
-    # Earnings yield: net_income / market_cap
     merged_df['earnings_yield'] = np.where(
         (merged_df['net_income'].notna()) & (merged_df['market_cap'] > 0),
         merged_df['net_income'] / merged_df['market_cap'],
         np.nan
     )
 
-    # Cash flow yield: operating_cf / market_cap
     merged_df['cf_yield'] = np.where(
         (merged_df['operating_cf'].notna()) & (merged_df['market_cap'] > 0),
         merged_df['operating_cf'] / merged_df['market_cap'],
@@ -373,61 +356,78 @@ def attach_fin(daily: pd.DataFrame, fin: pd.DataFrame):
 
     return merged_df.reset_index(drop=True)
 
-def run_ticker(api: APIClient, ticker: str, start: date, end: date) -> None:
+def run_ticker(api: APIClient, ticker: str, start: date, end: date) -> pd.DataFrame:
     prices = get_daily_bars(api, ticker, start, end)
     fin = get_quarterly_financials(api, ticker)
 
-    # if not fin.empty:
-    #     fin_out = FUND_DIR / f"{ticker}_fundamentals.csv"
-    #     fin.to_csv(fin_out, index=False)
-
     final = attach_fin(prices, fin)
-
-    # out_path = DATA_DIR / f"{ticker}.csv"
-    # final.to_csv(out_path, index=False)
+    final['ticker'] = ticker   # 🔑 REQUIRED
     return final
 
-def monthly_agg(df:pd.DataFrame):
+def quarterly_agg(df: pd.DataFrame):
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
-    df['month'] = df['date'].dt.to_period('M')
-    exclude_cols = ['date', 'open', 'high', 'low', 'volume', 'vwap', 
-                    'daily_change', 'daily_change_pct', 'month', 'period_end']
+
+    # Convert to quarterly period
+    df['quarter'] = df['date'].dt.to_period('Q')
+
+    exclude_cols = [
+        'date', 'open', 'high', 'low', 'volume', 'vwap',
+        'daily_change', 'daily_change_pct', 'quarter', 'period_end'
+    ]
     fundamentals_cols = [col for col in df.columns if col not in exclude_cols]
 
+    # Aggregation logic
     agg_dict = {'close': 'last'}
     for col in fundamentals_cols:
-        agg_dict[col] = 'last'  
+        agg_dict[col] = 'last'
 
-    monthly_df = df.groupby('month').agg(agg_dict).reset_index()
+    # Aggregate
+    quarterly_df = df.groupby('quarter').agg(agg_dict).reset_index()
 
-    monthly_df['date'] = monthly_df['month'].dt.to_timestamp('M')
-    monthly_df = monthly_df.drop(columns='month')
+    # 🔑 Use QUARTER START date (MM-01-YYYY)
+    quarterly_df['date'] = (
+        quarterly_df['quarter']
+        .dt.start_time              # YYYY-MM-01
+        .dt.strftime('%m-01-%Y')    # MM-01-YYYY
+    )
 
-    monthly_df = monthly_df.sort_values('date').reset_index(drop=True)
-    monthly_df['monthly_return'] = monthly_df['close'].pct_change()
-    monthly_df = monthly_df[monthly_df['monthly_return'].notna()].reset_index(drop=True)
+    quarterly_df = quarterly_df.drop(columns='quarter')
 
-    cols = monthly_df.columns.tolist()
+    # Sort chronologically
+    quarterly_df['date_sort'] = pd.to_datetime(quarterly_df['date'], format='%m-%d-%Y')
+    quarterly_df = quarterly_df.sort_values('date_sort').reset_index(drop=True)
+    quarterly_df = quarterly_df.drop(columns='date_sort')
+
+    # Quarterly return
+    quarterly_df['quarterly_return'] = quarterly_df['close'].pct_change()
+    quarterly_df = quarterly_df[
+        quarterly_df['quarterly_return'].notna()
+    ].reset_index(drop=True)
+
+    # Reorder columns
+    cols = quarterly_df.columns.tolist()
     cols.remove('date')
     cols.remove('close')
-    cols.remove('monthly_return')
-    monthly_df = monthly_df[['date', 'close', 'monthly_return'] + cols]
+    cols.remove('quarterly_return')
+    quarterly_df = quarterly_df[['date', 'close', 'quarterly_return'] + cols]
 
-    return monthly_df
+    return quarterly_df
 
-def calc_factors(df:pd.DataFrame):          #**Clarify what exactly each factor calculation should be/how to z score and what to do about nan
+def zscore(x):
+    return (x - x.mean()) / x.std(ddof=0)
+
+def calc_factors(df:pd.DataFrame):          #**z score at the very end
     df = df.copy()
-    def zscore(x):
-        return (x - x.mean()) / x.std(ddof=0)
-
+    
     # ---------------------------
     # 1. Value
     # ---------------------------
     df['bp'] = 1/df['pb_ratio']
 
+    # z score before combining
     df['value_raw'] = 0.4 * df['bp'] + 0.3 * df['earnings_yield'] + 0.3 * df['cf_yield']
-    df['value_z'] = df['value_raw'].transform(zscore) # df.groupby('date')['value_raw'].transform(zscore)
+    # df['value_z'] = df['value_raw'].transform(zscore) # df.groupby('date')['value_raw'].transform(zscore)
     
     # ---------------------------
     # 2. Quality factor
@@ -437,37 +437,34 @@ def calc_factors(df:pd.DataFrame):          #**Clarify what exactly each factor 
     df['roe'] = df['net_income'] / df['equity']
     df['de_ratio'] = df['liabilities'] / df['equity']
     df = df.sort_values('date').reset_index(drop=True)
-    df['evol'] = df['monthly_return'].rolling(12, min_periods=1).std().shift(1).reset_index(level=0, drop=True)
+    df['evol'] = df['quarterly_return'].rolling(12, min_periods=1).std().shift(1).reset_index(level=0, drop=True)
     # df.groupby('shares')['monthly_return'].rolling(12, min_periods=1).std().shift(1).reset_index(level=0, drop=True)
     
-    # Z-scores (negative for D/E and EVOL)
-    df['gpoa_z'] = df.groupby('date')['gpoa'].transform(zscore)
-    df['roe_z'] = df.groupby('date')['roe'].transform(zscore)
-    df['de_z'] = df.groupby('date')['de_ratio'].transform(lambda x: zscore(-x))
-    df['evol_z'] = df.groupby('date')['evol'].transform(lambda x: zscore(-x))
+    # df['gpoa_z'] = df.groupby('date')['gpoa'].transform(zscore)
+    # df['roe_z'] = df.groupby('date')['roe'].transform(zscore)
+    # df['de_z'] = df.groupby('date')['de_ratio'].transform(lambda x: zscore(-x))
+    # df['evol_z'] = df.groupby('date')['evol'].transform(lambda x: zscore(-x))
     
-    # Composite quality factor
-    df['quality_raw'] = df['gpoa_z'] + df['roe_z'] + df['de_z'] + df['evol_z']
-    df['quality_z'] = df.groupby('date')['quality_raw'].transform(zscore)
+    # df['quality_raw'] = df['gpoa_z'] + df['roe_z'] + df['de_z'] + df['evol_z']
+    # df['quality_z'] = df.groupby('date')['quality_raw'].transform(zscore)
     
     # ---------------------------
     # 3. Momentum factor
     # ---------------------------
-    df['close_1m'] = df.groupby('shares')['close'].shift(1)
-    df['close_12m'] = df.groupby('shares')['close'].shift(12)
+    df['close_1m'] = df['close'].shift(1)
+    df['close_12m'] = df['close'].shift(4)
     
     df['momentum_raw'] = (df['close_1m'] - df['close_12m']) / df['close_12m']
-    df['momentum_z'] = df.groupby('date')['momentum_raw'].transform(zscore)
+    # df['momentum_z'] = df.groupby('date')['momentum_raw'].transform(zscore)
     
     # ---------------------------
     # 4. Size factor
     # ---------------------------
     df['size_raw'] = -np.log(df['market_cap'])
-    df['size_z'] = df.groupby('date')['size_raw'].transform(zscore)
+    # df['size_z'] = df.groupby('date')['size_raw'].transform(zscore)
 
-    df = df.drop(columns=['bp', 'gpoa', 'roe', 'de_ratio', 'evol', 'gpoa_z', 'roe_z',
-                          'de_z', 'evol_z', 'close_1m', 'close_12m'])
-    
+    df = df.drop(columns=['bp'])
+    df = df[df['momentum_raw'].notna()].reset_index(drop=True)
     return df
 
 def main():
@@ -495,38 +492,78 @@ def main():
             return
         
     
-    # print(f"Processing {len(tickers)} tickers... (cache active)")
-    # for i, tkr in enumerate(tickers, 1):
-    #     print(f"[{i}/{len(tickers)}] {tkr}")
-    #     run_ticker(api, tkr, START_DATE, END_DATE)
-    # print(f"Done. CSVs written to: {DATA_DIR.resolve()}")
+    print(f"Processing {len(tickers)} tickers...")
+    all_dfs = []
 
-    ticker = 'AAPL'
-    df = run_ticker(api,ticker,START_DATE, END_DATE)
-    df = monthly_agg(df)
+    # ------------------------------------
+    # Uncomment below for testing purposes
+    # ------------------------------------
+
+    # tickers = ['AAPL','SFM']
+
+    for i,tkr in enumerate(tickers, 1):
+        try:
+            print(f"[{i}/{len(tickers)}] Adding {tkr}")
+            df = run_ticker(api, tkr, START_DATE, END_DATE)
+            df = quarterly_agg(df)
+            df = calc_factors(df)
+            all_dfs.append(df)
+        except Exception as e:
+            print(f"[WARN] {tkr} failed: {e}")
+    all_dfs = pd.concat(all_dfs,ignore_index=True)
+    print(f"Done. Intial Calculation Complete")
+
+    all_dfs['value_z'] = all_dfs['value_raw'].transform(zscore)
+
+    all_dfs['gpoa_z'] = all_dfs['gpoa'].transform(zscore)
+    all_dfs['roe_z'] = all_dfs['roe'].transform(zscore)
+    all_dfs['de_z'] = all_dfs['de_ratio'].transform(lambda x: zscore(-x))
+    all_dfs['evol_z'] = all_dfs['evol'].transform(lambda x: zscore(-x))
+    
+    all_dfs['quality_raw'] = all_dfs['gpoa_z'] + all_dfs['roe_z'] + all_dfs['de_z'] + all_dfs['evol_z']
+    all_dfs['quality_z'] = all_dfs['quality_raw'].transform(zscore)
+
+    all_dfs['momentum_z'] = all_dfs['momentum_raw'].transform(zscore)
+
+    all_dfs['size_z'] = all_dfs['size_raw'].transform(zscore)
+
+    all_results = {}
+
+    print(f'Running regression for {len(tickers)}tickers')
+    for i,tkr in enumerate(tickers, 1):
+        df = all_dfs[all_dfs['ticker'].str.contains(tkr)]
+        df = df[['quarterly_return','value_z','quality_z','momentum_z','size_z']].dropna()
+
+        y = df['quarterly_return']
+        X = df[['value_z', 'quality_z', 'momentum_z', 'size_z']]
+
+        model = LinearRegression(fit_intercept=True)
+        model.fit(X, y) 
+        print(f"[{i}/{len(tickers)}] Regression for {tkr} complete")
+
+        results = {
+            'intercept': float(model.intercept_),
+            'beta_value': float(model.coef_[0]),
+            'beta_quality': float(model.coef_[1]),
+            'beta_momentum': float(model.coef_[2]),
+            'beta_size': float(model.coef_[3]),
+            'r_squared': model.score(X, y)
+        }
+
+        all_results[tkr] = results
+
+    # ticker = 'AAPL'
+    # df = run_ticker(api,ticker,START_DATE, END_DATE)
+    # df = quarterly_agg(df)
     # df = calc_factors(df)
-    print(df.columns.tolist())
-    print(df.head(20))
+
+    # print(all_dfs.columns.tolist())
+    # print(all_dfs.head(20))
+    return all_results
 
 if __name__ == "__main__":
     main()
 
-
-
-
-# Read data 
-# - (close price + fundamentals)
-# - Metric calculation
-# - aggregate to monthly level (do asof for fundamentals)
-
-# Calculate Factors function
-
-# Regression function
-
-# For stock in universe:
-#   Read data
-#   Calculate factors
-#   Regression
 
 
 
