@@ -27,12 +27,6 @@ DATA_DIR.mkdir(exist_ok=True)
 FUND_DIR = Path("fundamentals")
 FUND_DIR.mkdir(exist_ok=True)
 
-
-CACHE_DIR = Path(".http_cache")
-CACHE_DIR.mkdir(exist_ok=True)
-FIN_CACHE_DIR = Path(".cache_financials")
-FIN_CACHE_DIR.mkdir(exist_ok=True)
-TICKER_CACHE_PATH = Path(".cache_sp500_tickers.json")
 TICKER_LIST_PATH = Path("tickers.txt") #change to our portfolio holdings
 SPY_PATH = DATA_DIR / "SPY.csv"
 
@@ -53,49 +47,49 @@ if not API_KEY:
     print("ERROR: POLYGON_API_KEY missing. Add it to your .env file.", file=sys.stderr)
     sys.exit(1)
 
-SESSION = requests_cache.CachedSession(
-    cache_name=str(CACHE_DIR / "polygon_cache"),
-    backend="sqlite",
-    allowable_methods=("GET",),
-    expire_after=timedelta(days=3),
-    stale_if_error=True,
-)
-SESSION.params = SESSION.params or {}
-SESSION.params.update({"apiKey": API_KEY})
+# SESSION = requests_cache.CachedSession(
+#     cache_name=str(CACHE_DIR / "polygon_cache"),
+#     backend="sqlite",
+#     allowable_methods=("GET",),
+#     expire_after=timedelta(days=3),
+#     stale_if_error=True,
+# )
+# SESSION.params = SESSION.params or {}
+# SESSION.params.update({"apiKey": API_KEY})
 
-def _sleep():
-    time.sleep(SLEEP_BETWEEN_CALLS)
+# def _sleep():
+#     time.sleep(SLEEP_BETWEEN_CALLS)
 
-def _iso(d: date) -> str:
-    return d.strftime("%Y-%m-%d")
+# def _iso(d: date) -> str:
+#     return d.strftime("%Y-%m-%d")
 
-def _get(
-    url: str, params: Optional[Dict[str, Any]] = None, retries: int = 5
-) -> Dict[str, Any]:
-    """GET with simple retry/backoff and rate-limit awareness."""
-    params = params or {}
-    backoff = 1.0
-    for attempt in range(1, retries + 1):
-        try:
-            resp = SESSION.get(url, params=params, timeout=30)
-            if not resp.from_cache:
-                _sleep()
-            if resp.status_code == 429:
-                time.sleep(backoff)
-                backoff = min(30.0, backoff * 2.0)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            if attempt == retries:
-                raise
-            time.sleep(backoff)
-            backoff = min(30.0, backoff * 2.0)
-    # Should not reach here
-    return {}
+# def _get(
+#     url: str, params: Optional[Dict[str, Any]] = None, retries: int = 5
+# ) -> Dict[str, Any]:
+#     """GET with simple retry/backoff and rate-limit awareness."""
+#     params = params or {}
+#     backoff = 1.0
+#     for attempt in range(1, retries + 1):
+#         try:
+#             resp = SESSION.get(url, params=params, timeout=30)
+#             if not resp.from_cache:
+#                 _sleep()
+#             if resp.status_code == 429:
+#                 time.sleep(backoff)
+#                 backoff = min(30.0, backoff * 2.0)
+#                 continue
+#             resp.raise_for_status()
+#             return resp.json()
+#         except requests.RequestException as e:
+#             if attempt == retries:
+#                 raise
+#             time.sleep(backoff)
+#             backoff = min(30.0, backoff * 2.0)
+#     # Should not reach here
+#     return {}
 
-def _fin_cache_path(ticker: str) -> Path:
-    return FIN_CACHE_DIR / f"{ticker}.json"
+# def _fin_cache_path(ticker: str) -> Path:
+#     return FIN_CACHE_DIR / f"{ticker}.json"
 
 # =========================
 # Universe (S&P 500) NEED TO FIX CURRENTLY GATHERING TOO MANY TICKERS
@@ -125,53 +119,53 @@ def load_tickers_from_file(path: Path) -> Optional[List[str]]:
     return deduped
 
 
-def get_sp500_tickers() -> List[str]:
-    """
-    Fetch S&P 500 tickers via Polygon reference API.
-    Caches results to .cache_sp500_tickers.json.
-    """
-    if TICKER_CACHE_PATH.exists():
-        try:
-            return sorted(set(json.loads(TICKER_CACHE_PATH.read_text())))
-        except Exception:
-            pass  # fall through to refetch
+# def get_sp500_tickers() -> List[str]:
+#     """
+#     Fetch S&P 500 tickers via Polygon reference API.
+#     Caches results to .cache_sp500_tickers.json.
+#     """
+#     if TICKER_CACHE_PATH.exists():
+#         try:
+#             return sorted(set(json.loads(TICKER_CACHE_PATH.read_text())))
+#         except Exception:
+#             pass  # fall through to refetch
 
-    tickers: List[str] = []
-    url = f"{BASE_V3}/reference/tickers"
-    params = {
-        "market": "stocks",
-        "active": "true",
-        "limit": 1000,
-        "index": "sp500",
-        "sort": "ticker",
-    }
+#     tickers: List[str] = []
+#     url = f"{BASE_V3}/reference/tickers"
+#     params = {
+#         "market": "stocks",
+#         "active": "true",
+#         "limit": 1000,
+#         "index": "sp500",
+#         "sort": "ticker",
+#     }
 
-    while True:
-        data = _get(url, params=params)
-        results = data.get("results") or []
-        for r in results:
-            sym = r.get("ticker")
-            # Filter to plain equity tickers
-            if sym and all(ch.isalnum() or ch in {".", "-", "/"} for ch in sym):
-                tickers.append(sym)
+#     while True:
+#         data = _get(url, params=params)
+#         results = data.get("results") or []
+#         for r in results:
+#             sym = r.get("ticker")
+#             # Filter to plain equity tickers
+#             if sym and all(ch.isalnum() or ch in {".", "-", "/"} for ch in sym):
+#                 tickers.append(sym)
 
-        next_url = data.get("next_url")
-        if next_url:
-            url = next_url  # already includes query params; API key auto-attached by session
-            params = {}
-        else:
-            break
+#         next_url = data.get("next_url")
+#         if next_url:
+#             url = next_url  # already includes query params; API key auto-attached by session
+#             params = {}
+#         else:
+#             break
 
-    tickers = sorted(set(tickers))
-    if not tickers:
-        raise RuntimeError(
-            "Could not fetch S&P 500 membership via Polygon. "
-            "Your plan may not include index membership. "
-            "Workaround: hardcode tickers = ['AAPL','MSFT',...]"
-        )
+#     tickers = sorted(set(tickers))
+#     if not tickers:
+#         raise RuntimeError(
+#             "Could not fetch S&P 500 membership via Polygon. "
+#             "Your plan may not include index membership. "
+#             "Workaround: hardcode tickers = ['AAPL','MSFT',...]"
+#         )
 
-    TICKER_CACHE_PATH.write_text(json.dumps(tickers, indent=2))
-    return tickers
+#     TICKER_CACHE_PATH.write_text(json.dumps(tickers, indent=2))
+#     return tickers
 
 # =========================
 # Prices (daily aggregates)
@@ -216,70 +210,29 @@ def get_daily_bars(api: APIClient, ticker: str, start: date, end: date) -> pd.Da
 # =========================
 
 def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
-    ref_cache_path = _fin_cache_path(ticker)
 
-    if ref_cache_path.exists():
-        ref_raw = json.loads(ref_cache_path.read_text())
-    else:
-        ref_url = f"{BASE_VX}/vX/reference/financials"
-        ref_params = {
-            "ticker": ticker,
-            "timeframe": "quarterly",
-            "limit": 100,
-            "sort": "period_of_report_date",
-            "order": "asc",
-        }
-        ref_raw = _get(ref_url, params=ref_params)
-        ref_cache_path.write_text(json.dumps(ref_raw))
-
-    cf_url = f"{BASE_VX}/stocks/financials/v1/cash-flow-statements"
-    cf_params = {
-        "tickers": ticker,
-        "timeframe": "quarterly",
-        "limit": 100,
-    }
-
-    cf_raw = _get(cf_url, params=cf_params)
-
-    cf_by_period = {}
-    for blk in cf_raw.get("results", []):
-        key = (blk.get("filing_date"))
-        cf_by_period[key] = blk
+    bs = api.get_balance_sheets(ticker)
+    is_ = api.get_income_statements(ticker)
+    cf = api.get_cash_flow_statements(ticker)
 
     rows = []
 
-    for blk in ref_raw.get("results", []):
-        fin = blk.get("financials", {}) or {}
-        is_ = fin.get("income_statement", {}) or {}
-        bs = fin.get("balance_sheet", {}) or {}
+    for dt in bs['period_end']:
 
-        filing_date = blk.get("filing_date")
+        revenue = is_[is_['period_end']==dt]['revenue'].iloc[0]
+        cogs = is_[is_['period_end']==dt]['cost_of_revenue'].iloc[0]
+        net_income = is_[is_['period_end']==dt]['consolidated_net_income_loss'].iloc[0]
 
-        if not filing_date:
-            continue
+        total_assets = bs[bs['period_end']==dt]['total_current_assets'].iloc[0]
+        equity = bs[bs['period_end']==dt]['total_equity'].iloc[0]
+        liabilities = bs[bs['period_end']==dt]['total_current_liabilities'].iloc[0]
+        shares = is_[is_['period_end']==dt]['diluted_shares_outstanding'].iloc[0]
 
-        cf_blk = cf_by_period.get(filing_date, {}) or {}
-
-        revenue = is_.get("revenues", {}).get("value")
-        cogs = is_.get("cost_of_revenue", {}).get("value")
-        net_income = is_.get("net_income_loss", {}).get("value")
-
-        total_assets = bs.get("assets", {}).get("value")
-        equity = bs.get("equity", {}).get("value")
-        liabilities = bs.get("liabilities", {}).get("value")
-        shares = is_.get("diluted_average_shares", {}).get("value")
-
-        operating_cf = cf_blk.get("net_cash_from_operating_activities")
-
-        market_cap = 0
-        if equity is not None and shares is not None:
-            bvps = equity / shares
-            market_cap = bvps * shares
+        operating_cf = cf[cf['period_end']==dt]['net_cash_from_operating_activities'].iloc[0]
 
         rows.append({
-            "period_end": pd.to_datetime(filing_date),
+            "period_end": pd.to_datetime(dt),
 
-            # "market_cap": market_cap,
             "revenue": revenue,
             "cogs": cogs,
             "total_assets": total_assets,
@@ -289,27 +242,107 @@ def get_quarterly_financials(api: APIClient, ticker: str) -> pd.DataFrame:
             "operating_cf": operating_cf,
             "shares": shares,
 
-            # "pb_ratio": (
-            #     market_cap / equity
-            #     if market_cap and equity
-            #     else np.nan
-            # ),
-            # "earnings_yield": (
-            #     net_income / market_cap
-            #     if net_income and market_cap
-            #     else np.nan
-            # ),
-            # "cf_yield": (
-            #     operating_cf / market_cap
-            #     if operating_cf and market_cap
-            #     else np.nan
-            # ),
             "liabilities_to_equity": (
                 liabilities / equity
                 if liabilities and equity
                 else np.nan
             ),
         })
+
+    # ref_cache_path = _fin_cache_path(ticker)
+
+    # if ref_cache_path.exists():
+    #     ref_raw = json.loads(ref_cache_path.read_text())
+    # else:
+    #     ref_url = f"{BASE_VX}/vX/reference/financials"
+    #     ref_params = {
+    #         "ticker": ticker,
+    #         "timeframe": "quarterly",
+    #         "limit": 100,
+    #         "sort": "period_of_report_date",
+    #         "order": "asc",
+    #     }
+    #     ref_raw = _get(ref_url, params=ref_params)
+    #     ref_cache_path.write_text(json.dumps(ref_raw))
+
+    # cf_url = f"{BASE_VX}/stocks/financials/v1/cash-flow-statements"
+    # cf_params = {
+    #     "tickers": ticker,
+    #     "timeframe": "quarterly",
+    #     "limit": 100,
+    # }
+
+    # cf_raw = _get(cf_url, params=cf_params)
+
+    # cf_by_period = {}
+    # for blk in cf_raw.get("results", []):
+    #     key = (blk.get("filing_date"))
+    #     cf_by_period[key] = blk
+
+    # rows = []
+
+    # for blk in ref_raw.get("results", []):
+    #     fin = blk.get("financials", {}) or {}
+    #     is_ = fin.get("income_statement", {}) or {}
+    #     bs = fin.get("balance_sheet", {}) or {}
+
+    #     filing_date = blk.get("filing_date")
+
+    #     if not filing_date:
+    #         continue
+
+    #     cf_blk = cf_by_period.get(filing_date, {}) or {}
+
+    #     revenue = is_.get("revenues", {}).get("value")
+    #     cogs = is_.get("cost_of_revenue", {}).get("value")
+    #     net_income = is_.get("net_income_loss", {}).get("value")
+
+    #     total_assets = bs.get("assets", {}).get("value")
+    #     equity = bs.get("equity", {}).get("value")
+    #     liabilities = bs.get("liabilities", {}).get("value")
+    #     shares = is_.get("diluted_average_shares", {}).get("value")
+
+    #     operating_cf = cf_blk.get("net_cash_from_operating_activities")
+
+    #     market_cap = 0
+    #     if equity is not None and shares is not None:
+    #         bvps = equity / shares
+    #         market_cap = bvps * shares
+
+    #     rows.append({
+    #         "period_end": pd.to_datetime(filing_date),
+
+    #         # "market_cap": market_cap,
+    #         "revenue": revenue,
+    #         "cogs": cogs,
+    #         "total_assets": total_assets,
+    #         "net_income": net_income,
+    #         "equity": equity,
+    #         "liabilities": liabilities,
+    #         "operating_cf": operating_cf,
+    #         "shares": shares,
+
+    #         # "pb_ratio": (
+    #         #     market_cap / equity
+    #         #     if market_cap and equity
+    #         #     else np.nan
+    #         # ),
+    #         # "earnings_yield": (
+    #         #     net_income / market_cap
+    #         #     if net_income and market_cap
+    #         #     else np.nan
+    #         # ),
+    #         # "cf_yield": (
+    #         #     operating_cf / market_cap
+    #         #     if operating_cf and market_cap
+    #         #     else np.nan
+    #         # ),
+    #         "liabilities_to_equity": (
+    #             liabilities / equity
+    #             if liabilities and equity
+    #             else np.nan
+    #         ),
+    #     })
 
     fin_df = pd.DataFrame(rows)
 
@@ -471,6 +504,7 @@ def main():
     api = APIClient(API_KEY)
     file_tickers = load_tickers_from_file(TICKER_LIST_PATH)
 
+    # Allow user input for tickers
     if file_tickers is not None:
         if not file_tickers:
             print(
@@ -481,15 +515,22 @@ def main():
         tickers = file_tickers
         print(f"Using {len(tickers)} tickers from {TICKER_LIST_PATH}.")
     else:
-        try:
-            tickers = get_sp500_tickers()
-        except Exception as e:
-            print(f"ERROR fetching S&P 500 tickers: {e}", file=sys.stderr)
-            print(
-                "Fallback: set DO_FULL_RUN=False and use DRY_RUN_TICKERS.",
-                file=sys.stderr,
-            )
-            return
+        print(f"ERROR fetching S&P 500 tickers: {e}", file=sys.stderr)
+        print(
+            "Fallback: set DO_FULL_RUN=False and use DRY_RUN_TICKERS.",
+            file=sys.stderr,
+        )
+        return
+    # else:
+    #     try:
+    #         tickers = get_sp500_tickers()
+    #     except Exception as e:
+    #         print(f"ERROR fetching S&P 500 tickers: {e}", file=sys.stderr)
+    #         print(
+    #             "Fallback: set DO_FULL_RUN=False and use DRY_RUN_TICKERS.",
+    #             file=sys.stderr,
+    #         )
+    #         return
         
     
     print(f"Processing {len(tickers)} tickers...")
@@ -498,7 +539,6 @@ def main():
     # ------------------------------------
     # Uncomment below for testing purposes
     # ------------------------------------
-
     # tickers = ['AAPL','SFM']
 
     for i,tkr in enumerate(tickers, 1):
@@ -559,6 +599,7 @@ def main():
 
     # print(all_dfs.columns.tolist())
     # print(all_dfs.head(20))
+    # print(all_results)
     return all_results
 
 if __name__ == "__main__":
